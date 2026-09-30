@@ -1,0 +1,52 @@
+[
+  {
+    "event_id": "quake-1",
+    "magnitude": 4.9,
+    "depth_km": 10.0,
+    "epicenter_lat": -6.0,
+    "epicenter_lon": 105.0,
+    "region_name": "Selat Jawa",
+    "occurred_at": "2026-09-30T00:00:00Z",
+    "potential_tsunami": false
+  },
+  {
+    "event_id": "quake-2",
+    "magnitude": 5.0,
+    "depth_km": 10.0,
+    "epicenter_lat": -6.0,
+    "epicenter_lon": 105.0,
+    "region_name": "Selat Jawa",
+    "occurred_at": "2026-09-30T00:00:01Z",
+    "potential_tsunami": false
+  },
+  {
+    "event_id": "quake-3",
+    "magnitude": 6.49,
+    "depth_km": 10.0,
+    "epicenter_lat": -6.0,
+    "epicenter_lon": 105.0,
+    "region_name": "Selat Jawa",
+    "occurred_at": "2026-09-30T00:00:02Z",
+    "potential_tsunami": false
+  },
+  {
+    "event_id": "quake-4",
+    "magnitude": 6.5,
+    "depth_km": 10.0,
+    "epicenter_lat": -6.0,
+    "epicenter_lon": 105.0,
+    "region_name": "Selat Jawa",
+    "occurred_at": "2026-09-30T00:00:03Z",
+    "potential_tsunami": false
+  },
+  {
+    "event_id": "quake-5",
+    "magnitude": 7.0,
+    "depth_km": 10.0,
+    "epicenter_lat": -6.0,
+    "epicenter_lon": 105.0,
+    "region_name": "Selat Jawa",
+    "occurred_at": "2026-09-30T00:00:04Z",
+    "potential_tsunami": true
+  }
+]

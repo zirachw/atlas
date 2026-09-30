@@ -1,0 +1,7 @@
+.env
+.env.*
+!.env.example
+*.test
+coverage.out
+/bin/
+/evidence/local/

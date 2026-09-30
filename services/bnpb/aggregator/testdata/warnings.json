@@ -1,0 +1,11 @@
+[
+  {
+    "warning_id": "warning-1",
+    "related_event_id": "quake-5",
+    "threat_level": "Awas",
+    "affected_zones": [
+      "Pesisir Jawa"
+    ],
+    "estimated_arrival": "2026-09-30T00:30:00Z"
+  }
+]

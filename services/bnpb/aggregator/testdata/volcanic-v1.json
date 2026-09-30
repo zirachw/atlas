@@ -1,0 +1,10 @@
+[
+  {
+    "report_id": "report-1",
+    "volcano_id": "merapi",
+    "alert_level": "Siaga",
+    "eruption_count_24h": 3,
+    "ash_column_height_m": 1200.0,
+    "reported_at": "2026-09-30T00:00:00Z"
+  }
+]
