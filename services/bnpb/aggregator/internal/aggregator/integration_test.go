@@ -115,6 +115,8 @@ func TestIntegrationStoreCommitRollbackRestartAndOwnership(t *testing.T) {
 	if !errors.As(e, &pgErr) || pgErr.Code != "42501" {
 		t.Fatalf("expected permission denied, got %T %v", e, e)
 	}
+	sample, _ := json.Marshal(data)
+	t.Logf("restart_snapshot=%s checkpoint=%s", sample, cp.Format(time.RFC3339Nano))
 	t.Log("verified unique identity, rollback, checkpoint restart, JSONB and denied non-owner connection")
 }
 func TestIntegrationLivePollingMappingFreshnessAndReads(t *testing.T) {
@@ -250,6 +252,12 @@ func TestIntegrationLivePollingMappingFreshnessAndReads(t *testing.T) {
 		r, e := s.Read(ctx, Query{Source: "PVMBG", Limit: 100})
 		return e == nil && r.Sources[0].Status == "stale" && r.Sources[0].StaleSince != nil
 	})
+	stale, err := s.Read(ctx, Query{Source: "PVMBG", Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _ := json.Marshal(stale)
+	t.Logf("outage_snapshot=%s", snapshot)
 	if request(api, "/internal/hazards?source=PVMBG", "test-internal").Code != 200 {
 		t.Fatal("stale data unusable")
 	}
