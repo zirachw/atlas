@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type ReadStore interface {
@@ -100,8 +102,9 @@ func parseQuery(r *http.Request) (Query, error) {
 	return q, nil
 }
 func (a *API) Handler() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+	mux := chi.NewRouter()
+	mux.Use(a.logRequest)
+	mux.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), a.Timeout)
 		defer cancel()
 		if a.Store.Health(ctx) != nil {
@@ -110,7 +113,7 @@ func (a *API) Handler() http.Handler {
 		}
 		writeJSON(w, 200, map[string]string{"status": "ok"})
 	})
-	mux.HandleFunc("GET /internal/hazards", func(w http.ResponseWriter, r *http.Request) {
+	mux.Get("/internal/hazards", func(w http.ResponseWriter, r *http.Request) {
 		credential := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if a.Token == "" || !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") || subtle.ConstantTimeCompare([]byte(credential), []byte(a.Token)) != 1 {
 			writeError(w, 401, "unauthorized")
@@ -151,6 +154,10 @@ func (a *API) Handler() http.Handler {
 		}
 		writeJSON(w, status, result)
 	})
+	return mux
+}
+
+func (a *API) logRequest(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get("X-Correlation-ID")
 		if !validCorrelation(id) {
@@ -160,7 +167,7 @@ func (a *API) Handler() http.Handler {
 		w.Header().Set("X-Correlation-ID", id)
 		start := time.Now()
 		logged := &statusWriter{ResponseWriter: w, status: 200}
-		mux.ServeHTTP(logged, r)
+		next.ServeHTTP(logged, r)
 		a.Log.Info("request", "service", "aggregator", "correlation_id", id, "method", r.Method, "path", r.URL.Path, "status", logged.status, "latency_ms", time.Since(start).Milliseconds())
 	})
 }

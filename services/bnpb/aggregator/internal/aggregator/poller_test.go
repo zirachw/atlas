@@ -1,11 +1,14 @@
 package aggregator
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -184,5 +187,29 @@ func TestSourceBoundsRetriesAndCancellation(t *testing.T) {
 	start := time.Now()
 	if _, e := p.fetch(ctx, "/volcanic-reports", nil, "id"); e == nil || time.Since(start) > time.Second {
 		t.Fatal("cancellation failed")
+	}
+}
+
+func TestSourceCallLogsDependencyAndSafeFailure(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(503)
+		w.Write([]byte("private source payload"))
+	}))
+	defer s.Close()
+	var output bytes.Buffer
+	p := newPoller("PVMBG", s.URL, newMemoryStore(), make(chan Publication, 1))
+	p.Log = slog.New(slog.NewJSONHandler(&output, nil))
+	if _, _, err := p.fetchOnce(context.Background(), "/volcanic-reports", nil, "poll-log"); err == nil {
+		t.Fatal("accepted source failure")
+	}
+	var entry map[string]any
+	if err := json.Unmarshal(output.Bytes(), &entry); err != nil {
+		t.Fatal(err)
+	}
+	if entry["dependency"] != "PVMBG" || entry["correlation_id"] != "poll-log" || entry["status"] != float64(503) || entry["reason"] != "source status 503" || entry["latency_ms"] == nil {
+		t.Fatal(entry)
+	}
+	if strings.Contains(output.String(), p.Credential) || strings.Contains(output.String(), "private source payload") {
+		t.Fatal("dependency log leaked credentials or payload")
 	}
 }

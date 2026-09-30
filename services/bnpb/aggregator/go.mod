@@ -3,6 +3,7 @@ module atlas/services/bnpb/aggregator
 go 1.27.1
 
 require (
+	github.com/go-chi/chi/v5 v5.3.2
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/rabbitmq/amqp091-go v1.13.0
 )

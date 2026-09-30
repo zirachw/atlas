@@ -102,3 +102,20 @@ func TestAPIAdmissionAndDeadline(t *testing.T) {
 		t.Fatal("admission slot leaked")
 	}
 }
+
+func TestAPIRouteMethodsAndCorrelation(t *testing.T) {
+	a := &API{Store: &readStub{}, Token: "test-internal", Timeout: time.Second, Capacity: make(chan struct{}, 1), Log: testLog()}
+	h := a.Handler()
+	for _, tc := range []struct {
+		method, path string
+		status       int
+	}{{"GET", "/health", 200}, {"POST", "/health", 405}, {"POST", "/internal/hazards", 405}, {"GET", "/missing", 404}} {
+		r := httptest.NewRequest(tc.method, tc.path, nil)
+		r.Header.Set("X-Correlation-ID", "invalid id")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != tc.status || !validCorrelation(w.Header().Get("X-Correlation-ID")) {
+			t.Fatal(tc, w.Code, w.Header())
+		}
+	}
+}

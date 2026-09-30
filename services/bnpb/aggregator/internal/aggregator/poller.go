@@ -66,7 +66,7 @@ func (p *Poller) fetch(ctx context.Context, path string, since *time.Time, id st
 	}
 	return nil, errors.New("source attempts exhausted")
 }
-func (p *Poller) fetchOnce(ctx context.Context, path string, since *time.Time, id string) ([]Object, int, error) {
+func (p *Poller) fetchOnce(ctx context.Context, path string, since *time.Time, id string) (records []Object, status int, err error) {
 	u, e := url.Parse(p.BaseURL + path)
 	if e != nil {
 		return nil, 0, errors.New("invalid source URL")
@@ -89,9 +89,12 @@ func (p *Poller) fetchOnce(ctx context.Context, path string, since *time.Time, i
 		req.Header.Set("Authorization", "Bearer "+p.Credential)
 	}
 	start := time.Now()
-	status := 0
 	defer func() {
-		p.Log.Info("source_call", "service", "aggregator", "source", p.Source, "correlation_id", id, "method", "GET", "path", path, "status", status, "latency_ms", time.Since(start).Milliseconds())
+		reason := ""
+		if err != nil {
+			reason = err.Error()
+		}
+		p.Log.Info("source_call", "service", "aggregator", "source", p.Source, "dependency", p.Source, "correlation_id", id, "method", "GET", "path", path, "status", status, "reason", reason, "latency_ms", time.Since(start).Milliseconds())
 	}()
 	resp, e := p.Client.Do(req)
 	if e != nil {
@@ -109,7 +112,6 @@ func (p *Poller) fetchOnce(ctx context.Context, path string, since *time.Time, i
 	if len(data) > MaxSourceBytes {
 		return nil, status, errors.New("source body bound exceeded")
 	}
-	var records []Object
 	if e = json.Unmarshal(data, &records); e != nil || records == nil {
 		return nil, status, errors.New("invalid source array")
 	}

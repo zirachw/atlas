@@ -194,11 +194,15 @@ func MapSeismic(o Object, warnings []Warning, now time.Time) (HazardEvent, error
 	if _, e = required[bool](o, "potential_tsunami"); e != nil {
 		return h, e
 	}
-	// The reserved join key cannot overwrite original additive source data.
-	if _, ok := o["tsunami_warnings"]; ok {
-		return h, fmt.Errorf("reserved source field tsunami_warnings")
-	}
 	h = HazardEvent{hazardID("BMKG", ref), "BMKG", ref, "SEISMIC", "", area, lat, lon, when, now, extensions(o, "event_id", "region_name", "epicenter_lat", "epicenter_lon", "occurred_at")}
+	// Preserve a source field that collides with the generated warning join.
+	if raw, ok := h.Attributes["tsunami_warnings"]; ok {
+		key := "source.tsunami_warnings"
+		for _, exists := h.Attributes[key]; exists; _, exists = h.Attributes[key] {
+			key = "source." + key
+		}
+		h.Attributes[key] = raw
+	}
 	return ApplyWarnings(h, warnings), nil
 }
 func MapVolcanic(o Object, now time.Time) (HazardEvent, error) {

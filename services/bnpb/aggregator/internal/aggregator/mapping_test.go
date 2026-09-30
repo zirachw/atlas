@@ -119,6 +119,31 @@ func TestVolcanicAdditiveValuesAndStableIdentity(t *testing.T) {
 		}
 	}
 }
+
+func TestSeismicAdditiveWarningKeyCollision(t *testing.T) {
+	o := clone(fixture(t, "seismic.json")[4])
+	o["tsunami_warnings"] = json.RawMessage(`{"source_extension":9007199254740993}`)
+	o["source.tsunami_warnings"] = json.RawMessage(`["existing extension"]`)
+	warnings, err := MapWarnings(fixture(t, "warnings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := MapSeismic(o, warnings, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.Severity != "AWAS" || string(h.Attributes["source.source.tsunami_warnings"]) != string(o["tsunami_warnings"]) || string(h.Attributes["source.tsunami_warnings"]) != string(o["source.tsunami_warnings"]) {
+		t.Fatal("source extensions lost during warning join", h.Attributes)
+	}
+	var joined []Object
+	if err := json.Unmarshal(h.Attributes["tsunami_warnings"], &joined); err != nil || len(joined) != 1 {
+		t.Fatal("missing generated warning join", joined, err)
+	}
+	h = ApplyWarnings(h, nil)
+	if _, exists := h.Attributes["tsunami_warnings"]; exists || h.Severity != "SIAGA" || string(h.Attributes["source.source.tsunami_warnings"]) != string(o["tsunami_warnings"]) {
+		t.Fatal("warning reconciliation lost source extension", h.Attributes)
+	}
+}
 func TestRequiredFieldsRejectMissingNullAndWrongType(t *testing.T) {
 	cases := []struct {
 		name      string
