@@ -40,6 +40,7 @@ help:
 	@echo "make start     Start Compose in the background"
 	@echo "make stop      Stop Compose and preserve volumes"
 	@echo "make logs      Follow Compose logs"
+	@echo "make integration  Test Aggregator with disposable PostgreSQL and RabbitMQ"
 
 setup:
 	$(call in_modules,go mod download)
@@ -88,3 +89,7 @@ stop:
 
 logs:
 	docker compose logs -f
+
+.PHONY: integration
+integration:
+	./scripts/test-aggregator-integration.sh

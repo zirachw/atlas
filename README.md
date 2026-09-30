@@ -34,9 +34,12 @@ Rebuild Aggregator independently.
 docker compose up -d --build --no-deps aggregator
 ```
 
+See the [Aggregator README](services/bnpb/aggregator/README.md) for API examples.
+
 ## Checks
 
 ```sh
 make setup
 make ci
+make integration         # uses disposable PostgreSQL and RabbitMQ
 ```
