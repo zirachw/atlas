@@ -1,6 +1,7 @@
 .env
 .env.*
 !.env.example
+.auth-*.pem
 *.test
 coverage.out
 /bin/

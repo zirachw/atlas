@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 repo=$(pwd)
 project="atlas-b-test-$$"
-override=$(mktemp)
+override=$(mktemp "$repo/.compose-test.XXXXXX.yaml")
 cat > "$override" <<'YAML'
 services:
   postgres:
@@ -33,6 +33,14 @@ source .env.example
 set +a
 export TEST_DATABASE_URL="postgres://aggregator:${CANONICAL_DB_PASSWORD}@${pg_port}/canonical?sslmode=disable"
 export TEST_AUTH_CANONICAL_URL="postgres://auth:${AUTH_DB_PASSWORD}@${pg_port}/canonical?sslmode=disable"
+export AUTH_TEST_DATABASE_URL="postgres://auth:${AUTH_DB_PASSWORD}@${pg_port}/auth?sslmode=disable"
 export TEST_RABBITMQ_URL="amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@${amqp_port}/"
+export CONSUMER_TEST_AMQP_URL="$TEST_RABBITMQ_URL"
 (cd services/bnpb/aggregator
 go test -race -count=1 -timeout=5m -run Integration -v ./internal/aggregator)
+(cd services/bnpb/auth
+go test -race -count=1 -timeout=5m -run Integration -v ./internal/auth)
+(cd consumers/consumer-a
+go test -race -count=1 -timeout=5m -run Integration -v ./internal/consumer)
+(cd consumers/consumer-b
+go test -race -count=1 -timeout=5m -run Integration -v ./internal/consumer)

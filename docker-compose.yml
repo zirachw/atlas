@@ -32,13 +32,36 @@ services:
       retries: 20
     restart: unless-stopped
 
+  bmkg:
+    build: ./services/bmkg
+    environment:
+      HTTP_ADDR: :8081
+      BMKG_API_KEY: ${BMKG_API_KEY:?set source key}
+      RESPONSE_DELAY: ${BMKG_RESPONSE_DELAY:-100ms}
+      EVENT_INTERVAL: ${SOURCE_EVENT_INTERVAL:-10s}
+    ports: ['127.0.0.1:${BMKG_PORT:-8081}:8081']
+    networks: [sources]
+    restart: unless-stopped
+
+  pvmbg:
+    build: ./services/pvmbg
+    environment:
+      HTTP_ADDR: :8082
+      PVMBG_TOKEN: ${PVMBG_TOKEN:?set source token}
+      MIN_RESPONSE_DELAY: ${PVMBG_MIN_RESPONSE_DELAY:-500ms}
+      MAX_RESPONSE_DELAY: ${PVMBG_MAX_RESPONSE_DELAY:-3s}
+      EVENT_INTERVAL: ${SOURCE_EVENT_INTERVAL:-10s}
+    ports: ['127.0.0.1:${PVMBG_PORT:-8082}:8082']
+    networks: [sources]
+    restart: unless-stopped
+
   aggregator:
     build: ./services/bnpb/aggregator
     environment:
       DATABASE_URL: postgres://aggregator:${CANONICAL_DB_PASSWORD}@postgres:5432/canonical?sslmode=disable
       RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
-      BMKG_BASE_URL: ${BMKG_BASE_URL:-http://bmkg:8081}
-      PVMBG_BASE_URL: ${PVMBG_BASE_URL:-http://pvmbg:8082}
+      BMKG_BASE_URL: http://bmkg:8081
+      PVMBG_BASE_URL: http://pvmbg:8082
       BMKG_API_KEY: ${BMKG_API_KEY:?set source key}
       PVMBG_TOKEN: ${PVMBG_TOKEN:?set source token}
       AGGREGATOR_INTERNAL_TOKEN: ${AGGREGATOR_INTERNAL_TOKEN:?set internal token}
@@ -54,21 +77,108 @@ services:
       PUBLISH_TIMEOUT: ${PUBLISH_TIMEOUT:-3s}
       PUBLISH_RETRIES: ${PUBLISH_RETRIES:-2}
       PUBLISH_CAPACITY: ${PUBLISH_CAPACITY:-256}
-    ports: ['127.0.0.1:${AGGREGATOR_PORT:-8083}:8083']
     networks: [sources, internal-api, canonical, events]
     depends_on:
       postgres: {condition: service_healthy}
       rabbitmq: {condition: service_healthy}
     restart: unless-stopped
 
+  auth:
+    build: ./services/bnpb/auth
+    environment:
+      AUTH_DATABASE_URL: postgres://auth:${AUTH_DB_PASSWORD}@postgres:5432/auth?sslmode=disable
+      AUTH_VALIDATE_TOKEN: ${AUTH_VALIDATE_TOKEN:?set Auth validation credential}
+      AUTH_ED25519_PRIVATE_KEY_B64: ${AUTH_ED25519_PRIVATE_KEY_B64:?generate and set Auth private key}
+      MEDIA_CLIENT_ID: ${MEDIA_CLIENT_ID:?set Media client ID}
+      MEDIA_CLIENT_SECRET: ${MEDIA_CLIENT_SECRET:?set Media client secret}
+      FIELD_TEAM_CLIENT_ID: ${FIELD_TEAM_CLIENT_ID:?set Field Team client ID}
+      FIELD_TEAM_CLIENT_SECRET: ${FIELD_TEAM_CLIENT_SECRET:?set Field Team client secret}
+      INTERNAL_OPS_CLIENT_ID: ${INTERNAL_OPS_CLIENT_ID:?set Internal Ops client ID}
+      INTERNAL_OPS_CLIENT_SECRET: ${INTERNAL_OPS_CLIENT_SECRET:?set Internal Ops client secret}
+      ACCESS_TOKEN_TTL: ${ACCESS_TOKEN_TTL:-60s}
+      REFRESH_TOKEN_TTL: ${REFRESH_TOKEN_TTL:-168h}
+      AUTH_HTTP_ADDR: :8084
+    ports: ['127.0.0.1:${AUTH_PORT:-8084}:8084']
+    networks: [auth-api, auth-store]
+    depends_on:
+      postgres: {condition: service_healthy}
+    restart: unless-stopped
+
+  client-api:
+    build: ./services/bnpb/client-api
+    environment:
+      AUTH_BASE_URL: http://auth:8084
+      AGGREGATOR_BASE_URL: http://aggregator:8083
+      AGGREGATOR_INTERNAL_TOKEN: ${AGGREGATOR_INTERNAL_TOKEN:?set internal token}
+      AUTH_VALIDATE_TOKEN: ${AUTH_VALIDATE_TOKEN:?set Auth validation credential}
+      AUTH_ED25519_PUBLIC_KEY_B64: ${AUTH_ED25519_PUBLIC_KEY_B64:?generate and set Auth public key}
+      CLIENT_API_OUTBOUND_TIMEOUT: ${CLIENT_API_OUTBOUND_TIMEOUT:-3s}
+      CLIENT_API_HTTP_ADDR: :8080
+    ports: ['127.0.0.1:${CLIENT_API_PORT:-8080}:8080']
+    networks: [auth-api, internal-api]
+    depends_on:
+      auth: {condition: service_healthy}
+      aggregator: {condition: service_healthy}
+    restart: unless-stopped
+
+  consumer-a:
+    build: ./consumers/consumer-a
+    environment:
+      AMQP_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
+      CONSUMER_NAME: ${CONSUMER_A_NAME:-consumer-a}
+      CONSUMER_QUEUE: ${CONSUMER_A_QUEUE:-hazard.events.consumer-a}
+      CONSUMER_STATE_PATH: /data/processed-hazard-ids.txt
+      CONSUMER_HEALTH_ADDR: :8091
+    volumes: [consumer-a-data:/data]
+    networks: [events]
+    depends_on:
+      rabbitmq: {condition: service_healthy}
+    restart: unless-stopped
+
+  consumer-b:
+    build: ./consumers/consumer-b
+    environment:
+      AMQP_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
+      CONSUMER_NAME: ${CONSUMER_B_NAME:-consumer-b}
+      CONSUMER_QUEUE: ${CONSUMER_B_QUEUE:-hazard.events.consumer-b}
+      CONSUMER_STATE_PATH: /data/processed-hazard-ids.txt
+      CONSUMER_HEALTH_ADDR: :8092
+    volumes: [consumer-b-data:/data]
+    networks: [events]
+    depends_on:
+      rabbitmq: {condition: service_healthy}
+    restart: unless-stopped
+
+  consumer-c-demo:
+    profiles: [consumer-c-demo]
+    build: ./consumers/consumer-b
+    environment:
+      AMQP_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
+      CONSUMER_NAME: ${CONSUMER_C_NAME:-consumer-c}
+      CONSUMER_QUEUE: ${CONSUMER_C_QUEUE:-hazard.events.consumer-c}
+      CONSUMER_STATE_PATH: /data/processed-hazard-ids.txt
+      CONSUMER_HEALTH_ADDR: :8092
+    volumes: [consumer-c-data:/data]
+    networks: [events]
+    depends_on:
+      rabbitmq: {condition: service_healthy}
+    restart: unless-stopped
+
 networks:
   sources:
   internal-api:
+    internal: true
+  auth-api:
+    internal: true
   events:
   canonical:
     internal: true
   auth-store:
     internal: true
+
 volumes:
   postgres-data:
   rabbitmq-data:
+  consumer-a-data:
+  consumer-b-data:
+  consumer-c-data:
