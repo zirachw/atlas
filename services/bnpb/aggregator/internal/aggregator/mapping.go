@@ -95,7 +95,7 @@ func MapWarnings(records []Object) ([]Warning, error) {
 	out := make([]Warning, 0, len(records))
 	seen := map[string]bool{}
 	for _, o := range records {
-		id, e := textField(o, "warning_id")
+		id, w, e := mapWarning(o)
 		if e != nil {
 			return nil, e
 		}
@@ -103,33 +103,40 @@ func MapWarnings(records []Object) ([]Warning, error) {
 			return nil, fmt.Errorf("duplicate warning ID")
 		}
 		seen[id] = true
-		ref, e := textField(o, "related_event_id")
-		if e != nil {
-			return nil, e
-		}
-		threat, e := textField(o, "threat_level")
-		if e != nil {
-			return nil, e
-		}
-		severity, e := level(threat, false)
-		if e != nil {
-			return nil, e
-		}
-		zones, e := required[[]string](o, "affected_zones")
-		if e != nil {
-			return nil, e
-		}
-		for _, z := range zones {
-			if strings.TrimSpace(z) == "" {
-				return nil, fmt.Errorf("invalid affected zones")
-			}
-		}
-		if _, e = timestamp(o, "estimated_arrival"); e != nil {
-			return nil, e
-		}
-		out = append(out, Warning{ref, severity, o})
+		out = append(out, w)
 	}
 	return out, nil
+}
+func mapWarning(o Object) (string, Warning, error) {
+	id, e := textField(o, "warning_id")
+	if e != nil {
+		return "", Warning{}, e
+	}
+	ref, e := textField(o, "related_event_id")
+	if e != nil {
+		return id, Warning{}, e
+	}
+	threat, e := textField(o, "threat_level")
+	if e != nil {
+		return id, Warning{}, e
+	}
+	severity, e := level(threat, false)
+	if e != nil {
+		return id, Warning{}, e
+	}
+	zones, e := required[[]string](o, "affected_zones")
+	if e != nil {
+		return id, Warning{}, e
+	}
+	for _, z := range zones {
+		if strings.TrimSpace(z) == "" {
+			return id, Warning{}, fmt.Errorf("invalid affected zones")
+		}
+	}
+	if _, e = timestamp(o, "estimated_arrival"); e != nil {
+		return id, Warning{}, e
+	}
+	return id, Warning{ref, severity, o}, nil
 }
 func ApplyWarnings(h HazardEvent, warnings []Warning) HazardEvent {
 	var magnitude float64

@@ -80,8 +80,8 @@ func scanEvent(row pgx.Row) (HazardEvent, error) {
 	}
 	return h, e
 }
-func (s *Store) WarningCandidates(ctx context.Context, max int) ([]HazardEvent, error) {
-	rows, e := s.ingest.Query(ctx, "SELECT "+columns+" FROM hazard_events WHERE source='BMKG' AND attributes->>'potential_tsunami'='true' ORDER BY hazard_id LIMIT $1", max+1)
+func (s *Store) WarningEvents(ctx context.Context, refs []string) ([]HazardEvent, error) {
+	rows, e := s.ingest.Query(ctx, "SELECT "+columns+" FROM hazard_events WHERE source='BMKG' AND source_ref_id=ANY($1)", refs)
 	if e != nil {
 		return nil, e
 	}
@@ -93,9 +93,6 @@ func (s *Store) WarningCandidates(ctx context.Context, max int) ([]HazardEvent, 
 			return nil, e
 		}
 		out = append(out, h)
-	}
-	if len(out) > max {
-		return nil, errors.New("warning reconciliation bound exceeded")
 	}
 	return out, rows.Err()
 }
