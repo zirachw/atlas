@@ -1,0 +1,194 @@
+[
+  {
+    "report_id": "pvmbg-seed-001",
+    "volcano_id": "merapi",
+    "alert_level": "Normal",
+    "eruption_count_24h": 0,
+    "ash_column_height_m": 0.0,
+    "reported_at": "2026-09-29T00:15:00Z"
+  },
+  {
+    "report_id": "pvmbg-seed-002",
+    "volcano_id": "semeru",
+    "alert_level": "Waspada",
+    "eruption_count_24h": 2,
+    "ash_column_height_m": 300.0,
+    "reported_at": "2026-09-29T01:45:00Z"
+  },
+  {
+    "report_id": "pvmbg-seed-003",
+    "volcano_id": "krakatau",
+    "alert_level": "Siaga",
+    "eruption_count_24h": 8,
+    "ash_column_height_m": 1200.0,
+    "reported_at": "2026-09-29T03:15:00Z"
+  },
+  {
+    "report_id": "pvmbg-seed-004",
+    "volcano_id": "merapi",
+    "alert_level": "Awas",
+    "eruption_count_24h": 25,
+    "ash_column_height_m": 3500.0,
+    "reported_at": "2026-09-29T04:45:00Z"
+  },
+  {
+    "report_id": "pvmbg-seed-005",
+    "volcano_id": "semeru",
+    "alert_level": "Normal",
+    "eruption_count_24h": 0,
+    "ash_column_height_m": 0.0,
+    "reported_at": "2026-09-29T06:15:00Z"
+  },
+  {
+    "report_id": "pvmbg-seed-006",
+    "volcano_id": "krakatau",
+    "alert_level": "Waspada",
+    "eruption_count_24h": 1,
+    "ash_column_height_m": 150.0,
+    "reported_at": "2026-09-29T07:45:00Z"
+  },
+  {
+    "report_id": "pvmbg-seed-007",
+    "volcano_id": "merapi",
+    "alert_level": "Siaga",
+    "eruption_count_24h": 5,
+    "ash_column_height_m": 900.0,
+    "reported_at": "2026-09-29T09:15:00Z"
+  },
+  {
+    "report_id": "pvmbg-seed-008",
+    "volcano_id": "semeru",
+    "alert_level": "Waspada",
+    "eruption_count_24h": 3,
+    "ash_column_height_m": 450.0,
+    "reported_at": "2026-09-29T10:45:00Z"
+  },
+  {
+    "report_id": "pvmbg-seed-009",
+    "volcano_id": "krakatau",
+    "alert_level": "Normal",
+    "eruption_count_24h": 0,
+    "ash_column_height_m": 0.0,
+    "reported_at": "2026-09-29T12:15:00Z"
+  },
+  {
+    "report_id": "pvmbg-seed-010",
+    "volcano_id": "merapi",
+    "alert_level": "Siaga",
+    "eruption_count_24h": 12,
+    "ash_column_height_m": 1800.0,
+    "reported_at": "2026-09-29T13:45:00Z"
+  },
+  {
+    "report_id": "pvmbg-seed-011",
+    "volcano_id": "semeru",
+    "alert_level": "Awas",
+    "eruption_count_24h": 40,
+    "ash_column_height_m": 4200.0,
+    "reported_at": "2026-09-29T15:15:00Z"
+  },
+  {
+    "report_id": "pvmbg-seed-012",
+    "volcano_id": "krakatau",
+    "alert_level": "Waspada",
+    "eruption_count_24h": 0,
+    "ash_column_height_m": 0.0,
+    "reported_at": "2026-09-29T16:45:00Z"
+  },
+  {
+    "report_id": "pvmbg-seed-013",
+    "volcano_id": "merapi",
+    "alert_level": "Normal",
+    "eruption_count_24h": 0,
+    "ash_column_height_m": 0.0,
+    "reported_at": "2026-09-29T18:15:00Z"
+  },
+  {
+    "report_id": "pvmbg-seed-014",
+    "volcano_id": "semeru",
+    "alert_level": "Siaga",
+    "eruption_count_24h": 7,
+    "ash_column_height_m": 1100.0,
+    "reported_at": "2026-09-29T19:45:00Z"
+  },
+  {
+    "report_id": "pvmbg-seed-015",
+    "volcano_id": "krakatau",
+    "alert_level": "Waspada",
+    "eruption_count_24h": 4,
+    "ash_column_height_m": 600.0,
+    "reported_at": "2026-09-29T21:15:00Z"
+  },
+  {
+    "report_id": "pvmbg-seed-016",
+    "volcano_id": "merapi",
+    "alert_level": "Siaga",
+    "eruption_count_24h": 9,
+    "ash_column_height_m": 1500.0,
+    "reported_at": "2026-09-29T22:45:00Z"
+  },
+  {
+    "report_id": "pvmbg-seed-017",
+    "volcano_id": "semeru",
+    "alert_level": "Normal",
+    "eruption_count_24h": 0,
+    "ash_column_height_m": 0.0,
+    "reported_at": "2026-09-30T00:15:00Z"
+  },
+  {
+    "report_id": "pvmbg-seed-018",
+    "volcano_id": "krakatau",
+    "alert_level": "Waspada",
+    "eruption_count_24h": 2,
+    "ash_column_height_m": 250.0,
+    "reported_at": "2026-09-30T01:45:00Z"
+  },
+  {
+    "report_id": "pvmbg-seed-019",
+    "volcano_id": "merapi",
+    "alert_level": "Awas",
+    "eruption_count_24h": 18,
+    "ash_column_height_m": 2800.0,
+    "reported_at": "2026-09-30T03:15:00Z"
+  },
+  {
+    "report_id": "pvmbg-seed-020",
+    "volcano_id": "semeru",
+    "alert_level": "Siaga",
+    "eruption_count_24h": 6,
+    "ash_column_height_m": 1000.0,
+    "reported_at": "2026-09-30T04:45:00Z"
+  },
+  {
+    "report_id": "pvmbg-seed-021",
+    "volcano_id": "krakatau",
+    "alert_level": "Normal",
+    "eruption_count_24h": 0,
+    "ash_column_height_m": 0.0,
+    "reported_at": "2026-09-30T06:15:00Z"
+  },
+  {
+    "report_id": "pvmbg-seed-022",
+    "volcano_id": "merapi",
+    "alert_level": "Waspada",
+    "eruption_count_24h": 3,
+    "ash_column_height_m": 400.0,
+    "reported_at": "2026-09-30T07:45:00Z"
+  },
+  {
+    "report_id": "pvmbg-seed-023",
+    "volcano_id": "semeru",
+    "alert_level": "Siaga",
+    "eruption_count_24h": 10,
+    "ash_column_height_m": 1600.0,
+    "reported_at": "2026-09-30T09:15:00Z"
+  },
+  {
+    "report_id": "pvmbg-seed-024",
+    "volcano_id": "krakatau",
+    "alert_level": "Waspada",
+    "eruption_count_24h": 1,
+    "ash_column_height_m": 200.0,
+    "reported_at": "2026-09-30T10:45:00Z"
+  }
+]
