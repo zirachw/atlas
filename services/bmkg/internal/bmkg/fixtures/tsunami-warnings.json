@@ -1,0 +1,82 @@
+[
+  {
+    "warning_id": "bmkg-tw-seed-001",
+    "related_event_id": "bmkg-seed-005",
+    "threat_level": "Awas",
+    "affected_zones": [
+      "Kepulauan Mentawai",
+      "Pesisir Sumatera Barat"
+    ],
+    "estimated_arrival": "2026-09-29T06:20:00Z"
+  },
+  {
+    "warning_id": "bmkg-tw-seed-002",
+    "related_event_id": "bmkg-seed-006",
+    "threat_level": "Waspada",
+    "affected_zones": [
+      "Pesisir Sumbawa",
+      "Pesisir Lombok"
+    ],
+    "estimated_arrival": "2026-09-29T07:55:00Z"
+  },
+  {
+    "warning_id": "bmkg-tw-seed-003",
+    "related_event_id": "bmkg-seed-006",
+    "threat_level": "Awas",
+    "affected_zones": [
+      "Pesisir Sumbawa",
+      "Pesisir Lombok"
+    ],
+    "estimated_arrival": "2026-09-29T08:00:00Z"
+  },
+  {
+    "warning_id": "bmkg-tw-seed-004",
+    "related_event_id": "bmkg-seed-007",
+    "threat_level": "Siaga",
+    "affected_zones": [
+      "Pantai Selatan Yogyakarta",
+      "Pantai Selatan Jawa Tengah"
+    ],
+    "estimated_arrival": "2026-09-29T09:35:00Z"
+  },
+  {
+    "warning_id": "bmkg-tw-seed-005",
+    "related_event_id": "bmkg-seed-008",
+    "threat_level": "Waspada",
+    "affected_zones": [
+      "Kepulauan Banda",
+      "Pesisir Maluku Tengah"
+    ],
+    "estimated_arrival": "2026-09-29T11:10:00Z"
+  },
+  {
+    "warning_id": "bmkg-tw-seed-006",
+    "related_event_id": "bmkg-seed-016",
+    "threat_level": "Siaga",
+    "affected_zones": [
+      "Pesisir Banten",
+      "Pesisir Lampung Selatan"
+    ],
+    "estimated_arrival": "2026-09-29T23:15:00Z"
+  },
+  {
+    "warning_id": "bmkg-tw-seed-007",
+    "related_event_id": "bmkg-seed-020",
+    "threat_level": "Siaga",
+    "affected_zones": [
+      "Kepulauan Banda",
+      "Pesisir Maluku Tengah"
+    ],
+    "estimated_arrival": "2026-09-30T05:20:00Z"
+  },
+  {
+    "warning_id": "bmkg-tw-seed-008",
+    "related_event_id": "bmkg-seed-020",
+    "threat_level": "Waspada",
+    "affected_zones": [
+      "Kepulauan Banda",
+      "Pesisir Maluku Tengah"
+    ],
+    "estimated_arrival": "2026-09-30T05:25:00Z"
+  }
+]
