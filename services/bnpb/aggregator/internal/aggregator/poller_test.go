@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,12 +17,13 @@ import (
 )
 
 type memoryStore struct {
-	mu         sync.Mutex
-	checkpoint map[string]*time.Time
-	events     map[string]HazardEvent
-	commits    map[string]int
-	failures   map[string]int
-	failSave   bool
+	mu             sync.Mutex
+	checkpoint     map[string]*time.Time
+	events         map[string]HazardEvent
+	commits        map[string]int
+	failures       map[string]int
+	failSave       bool
+	warningLookups [][]string
 }
 
 func newMemoryStore() *memoryStore {
@@ -32,7 +34,18 @@ func (s *memoryStore) Checkpoint(_ context.Context, source string) (*time.Time, 
 	defer s.mu.Unlock()
 	return s.checkpoint[source], nil
 }
-func (s *memoryStore) WarningCandidates(context.Context, int) ([]HazardEvent, error) { return nil, nil }
+func (s *memoryStore) WarningEvents(_ context.Context, refs []string) ([]HazardEvent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.warningLookups = append(s.warningLookups, refs)
+	out := []HazardEvent{}
+	for _, h := range s.events {
+		if slices.Contains(refs, h.SourceRefID) {
+			out = append(out, h)
+		}
+	}
+	return out, nil
+}
 func (s *memoryStore) Failure(_ context.Context, source string, _ time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -211,5 +224,88 @@ func TestSourceCallLogsDependencyAndSafeFailure(t *testing.T) {
 	}
 	if strings.Contains(output.String(), p.Credential) || strings.Contains(output.String(), "private source payload") {
 		t.Fatal("dependency log leaked credentials or payload")
+	}
+}
+func TestPollRejectsBadRecordsWithoutStallingSource(t *testing.T) {
+	valid := fixture(t, "volcanic-v1.json")[0]
+	unknown := clone(valid)
+	unknown["report_id"] = json.RawMessage(`"report-bromo"`)
+	unknown["volcano_id"] = json.RawMessage(`"bromo"`)
+	unknown["reported_at"] = json.RawMessage(`"2026-09-30T00:00:30Z"`)
+	missingID := clone(valid)
+	delete(missingID, "report_id")
+	missingID["reported_at"] = json.RawMessage(`"2026-09-30T00:00:20Z"`)
+	invalid := fixture(t, "invalid-volcanic.json")[0]
+	invalid["report_id"] = json.RawMessage(`"report-invalid"`)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]Object{valid, unknown, missingID, invalid, valid})
+	}))
+	defer server.Close()
+	var output bytes.Buffer
+	store := newMemoryStore()
+	p := newPoller("PVMBG", server.URL, store, make(chan Publication, 4))
+	p.Log = slog.New(slog.NewJSONHandler(&output, nil))
+	if e := p.Poll(context.Background(), "poll-bad"); e != nil {
+		t.Fatal("bad records failed the whole poll:", e)
+	}
+	if len(store.events) != 1 || store.failures["PVMBG"] != 0 {
+		t.Fatal("valid record not committed", store.events)
+	}
+	// The newest record is rejected, yet the checkpoint moves past it.
+	if store.checkpoint["PVMBG"].Format(time.RFC3339) != "2026-09-30T00:00:30Z" {
+		t.Fatal("checkpoint stalled at", store.checkpoint["PVMBG"])
+	}
+	if got := strings.Count(output.String(), `"msg":"record_rejected"`); got != 4 {
+		t.Fatalf("logged %d rejections, want 4: %s", got, output.String())
+	}
+	for _, want := range []string{`"source_ref_id":"report-bromo"`, `"reason":"unknown volcano"`, `"reason":"duplicate source ID"`, `"correlation_id":"poll-bad"`} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("rejection log misses %s", want)
+		}
+	}
+}
+func TestWarningsUseLookbackAndLoadOnlyReferencedEvents(t *testing.T) {
+	seismic := fixture(t, "seismic.json")
+	good := fixture(t, "warnings.json")[0]
+	bad := clone(good)
+	bad["warning_id"] = json.RawMessage(`"warning-bad"`)
+	bad["threat_level"] = json.RawMessage(`"Bahaya"`)
+	var mu sync.Mutex
+	var warningSince []string
+	served, warnings := seismic, []Object{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if r.URL.Path == "/tsunami-warnings" {
+			warningSince = append(warningSince, r.URL.Query().Get("since"))
+			_ = json.NewEncoder(w).Encode(warnings)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(served)
+	}))
+	defer server.Close()
+	store := newMemoryStore()
+	p := newPoller("BMKG", server.URL, store, make(chan Publication, 16))
+	if e := p.Poll(context.Background(), "first"); e != nil {
+		t.Fatal(e)
+	}
+	if len(store.warningLookups) != 0 {
+		t.Fatal("looked up stored events without any warning", store.warningLookups)
+	}
+	// A late warning for an already stored event, beside an invalid one and a duplicate.
+	mu.Lock()
+	served, warnings = []Object{}, []Object{good, bad, good}
+	mu.Unlock()
+	if e := p.Poll(context.Background(), "late"); e != nil {
+		t.Fatal("an invalid warning failed the poll:", e)
+	}
+	if !slices.Equal(warningSince, []string{"", "2026-09-29T23:00:04Z"}) {
+		t.Fatal("warnings must be fetched from one lookback before the checkpoint", warningSince)
+	}
+	if len(store.warningLookups) != 1 || !slices.Equal(store.warningLookups[0], []string{"quake-5"}) {
+		t.Fatal("must load only events referenced by valid warnings", store.warningLookups)
+	}
+	if h := store.events[hazardID("BMKG", "quake-5")]; h.Severity != "AWAS" {
+		t.Fatal("late warning not applied", h.Severity)
 	}
 }

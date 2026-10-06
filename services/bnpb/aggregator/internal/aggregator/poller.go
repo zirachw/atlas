@@ -15,9 +15,12 @@ import (
 const MaxRecords = 1000
 const MaxSourceBytes = 4 << 20
 
+// Warnings for events up to this long before the checkpoint are fetched again, so late warnings still apply.
+const WarningLookback = time.Hour
+
 type IngestStore interface {
 	Checkpoint(context.Context, string) (*time.Time, error)
-	WarningCandidates(context.Context, int) ([]HazardEvent, error)
+	WarningEvents(context.Context, []string) ([]HazardEvent, error)
 	Save(context.Context, string, []HazardEvent, *time.Time, time.Time) ([]HazardEvent, error)
 	Failure(context.Context, string, time.Time) error
 }
@@ -120,69 +123,92 @@ func (p *Poller) fetchOnce(ctx context.Context, path string, since *time.Time, i
 	}
 	return records, status, nil
 }
+func (p *Poller) reject(id, ref, reason string) {
+	p.Log.Warn("record_rejected", "service", "aggregator", "source", p.Source, "correlation_id", id, "source_ref_id", ref, "reason", reason)
+}
+func (p *Poller) fetchWarnings(ctx context.Context, checkpoint *time.Time, id string) ([]Warning, error) {
+	var since *time.Time
+	if checkpoint != nil {
+		t := checkpoint.Add(-WarningLookback)
+		since = &t
+	}
+	raw, e := p.fetch(ctx, "/tsunami-warnings", since, id)
+	if e != nil {
+		return nil, e
+	}
+	warnings := []Warning{}
+	seen := map[string]bool{}
+	for _, o := range raw {
+		ref, w, e := mapWarning(o)
+		if e == nil && seen[ref] {
+			e = errors.New("duplicate warning ID")
+		}
+		if e != nil {
+			p.reject(id, ref, e.Error())
+			continue
+		}
+		seen[ref] = true
+		warnings = append(warnings, w)
+	}
+	return warnings, nil
+}
 func (p *Poller) Poll(ctx context.Context, id string) error {
 	checkpoint, e := p.Store.Checkpoint(ctx, p.Source)
 	if e != nil {
 		return errors.New("checkpoint read failed")
 	}
+	path, idField, timeField := "/volcanic-reports", "report_id", "reported_at"
+	if p.Source == "BMKG" {
+		path, idField, timeField = "/seismic-events", "event_id", "occurred_at"
+	}
+	raw, e := p.fetch(ctx, path, checkpoint, id)
+	if e != nil {
+		return e
+	}
+	warnings := []Warning{}
+	if p.Source == "BMKG" {
+		if warnings, e = p.fetchWarnings(ctx, checkpoint, id); e != nil {
+			return e
+		}
+	}
 	now := time.Now().UTC()
 	events := []HazardEvent{}
-	if p.Source == "BMKG" {
-		raw, e := p.fetch(ctx, "/seismic-events", checkpoint, id)
+	seen := map[string]bool{}
+	for _, o := range raw {
+		// Rejected records still advance the checkpoint, so one bad record cannot stall the source.
+		if t, e := timestamp(o, timeField); e == nil && (checkpoint == nil || t.After(*checkpoint)) {
+			checkpoint = &t
+		}
+		var h HazardEvent
+		if p.Source == "BMKG" {
+			h, e = MapSeismic(o, warnings, now)
+		} else {
+			h, e = MapVolcanic(o, now)
+		}
+		if e == nil && seen[h.SourceRefID] {
+			e = errors.New("duplicate source ID")
+		}
 		if e != nil {
-			return e
+			ref, _ := textField(o, idField)
+			p.reject(id, ref, e.Error())
+			continue
 		}
-		warningRaw, e := p.fetch(ctx, "/tsunami-warnings", nil, id)
-		if e != nil {
-			return e
+		seen[h.SourceRefID] = true
+		events = append(events, h)
+	}
+	refs := []string{}
+	for _, w := range warnings {
+		if !seen[w.RelatedID] {
+			refs = append(refs, w.RelatedID)
 		}
-		warnings, e := MapWarnings(warningRaw)
-		if e != nil {
-			return e
-		}
-		seen := map[string]bool{}
-		for _, o := range raw {
-			h, e := MapSeismic(o, warnings, now)
-			if e != nil {
-				return e
-			}
-			if seen[h.SourceRefID] {
-				return errors.New("duplicate source ID")
-			}
-			seen[h.SourceRefID] = true
-			events = append(events, h)
-		}
-		old, e := p.Store.WarningCandidates(ctx, MaxRecords)
+	}
+	if len(refs) > 0 {
+		old, e := p.Store.WarningEvents(ctx, refs)
 		if e != nil {
 			return errors.New("warning lookup failed")
 		}
 		for _, h := range old {
-			if !seen[h.SourceRefID] {
-				events = append(events, ApplyWarnings(h, warnings))
-			}
-		}
-	} else {
-		raw, e := p.fetch(ctx, "/volcanic-reports", checkpoint, id)
-		if e != nil {
-			return e
-		}
-		seen := map[string]bool{}
-		for _, o := range raw {
-			h, e := MapVolcanic(o, now)
-			if e != nil {
-				return e
-			}
-			if seen[h.SourceRefID] {
-				return errors.New("duplicate source ID")
-			}
-			seen[h.SourceRefID] = true
-			events = append(events, h)
-		}
-	}
-	for _, h := range events {
-		if checkpoint == nil || h.OccurredAt.After(*checkpoint) {
-			t := h.OccurredAt
-			checkpoint = &t
+			events = append(events, ApplyWarnings(h, warnings))
 		}
 	}
 	created, e := p.Store.Save(ctx, p.Source, events, checkpoint, time.Now().UTC())
