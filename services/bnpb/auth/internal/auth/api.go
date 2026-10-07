@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type API struct {
@@ -158,7 +160,7 @@ func (a *API) refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parts := strings.Split(in.RefreshToken, ".")
-	if len(parts) != 2 {
+	if !validRefreshToken(in.RefreshToken) {
 		writeError(w, http.StatusUnauthorized, "invalid_refresh_token")
 		return
 	}
@@ -225,7 +227,7 @@ func (a *API) validate(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &in) {
 		return
 	}
-	if in.SessionID == "" || in.TokenVersion < 1 {
+	if !validSessionID(in.SessionID) || in.TokenVersion < 1 {
 		writeError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
@@ -289,7 +291,7 @@ func newCorrelationID() string {
 	return hex.EncodeToString(b[:])
 }
 func (a *API) Handler() http.Handler {
-	mux := http.NewServeMux()
+	mux := chi.NewRouter()
 	mux.HandleFunc("/auth/login", a.login)
 	mux.HandleFunc("/auth/refresh", a.refresh)
 	mux.HandleFunc("/auth/validate", a.validate)

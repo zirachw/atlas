@@ -177,7 +177,7 @@ func TestCredentialsAndValidateEndpointFailClosed(t *testing.T) {
 		t.Fatalf("bad service credential %d", w.Code)
 	}
 	store.fail = true
-	if w := postJSON(h, "/auth/validate", `{"session_id":"s","token_version":1}`, "Bearer service-secret"); w.Code != http.StatusServiceUnavailable {
+	if w := postJSON(h, "/auth/validate", `{"session_id":"00000000-0000-4000-8000-000000000001","token_version":1}`, "Bearer service-secret"); w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("store failure %d", w.Code)
 	}
 }
