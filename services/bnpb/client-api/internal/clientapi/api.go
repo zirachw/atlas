@@ -12,7 +12,10 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/go-chi/chi/v5"
 )
 
 var summaryFields = map[string]bool{
@@ -21,9 +24,11 @@ var summaryFields = map[string]bool{
 }
 
 type API struct {
-	Config Config
-	Client *http.Client
-	Log    *slog.Logger
+	Config       Config
+	Client       *http.Client
+	Log          *slog.Logger
+	capacity     chan struct{}
+	capacityOnce sync.Once
 }
 type validateRequest struct {
 	SessionID    string `json:"session_id"`
@@ -158,19 +163,31 @@ func (a *API) validateCurrent(ctx context.Context, claims AccessClaims, id strin
 		return http.StatusServiceUnavailable, "auth_unavailable"
 	}
 	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 4097))
+	if err != nil || len(raw) > 4096 {
+		return http.StatusServiceUnavailable, "auth_invalid_response"
+	}
 	if resp.StatusCode == http.StatusUnauthorized {
-		return http.StatusUnauthorized, "invalid_token"
+		var failure struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(raw, &failure) == nil && failure.Error.Code == "inactive_session" {
+			return http.StatusUnauthorized, "invalid_token"
+		}
+		return http.StatusServiceUnavailable, "auth_unavailable"
 	}
 	if resp.StatusCode != http.StatusOK {
 		return http.StatusServiceUnavailable, "auth_unavailable"
 	}
 	var result struct {
-		Active bool `json:"active"`
+		Active *bool `json:"active"`
 	}
-	if json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&result) != nil {
+	if json.Unmarshal(raw, &result) != nil || result.Active == nil {
 		return http.StatusServiceUnavailable, "auth_invalid_response"
 	}
-	if !result.Active {
+	if !*result.Active {
 		return http.StatusUnauthorized, "invalid_token"
 	}
 	return http.StatusOK, ""
@@ -187,9 +204,16 @@ func summaryData(raw json.RawMessage) (json.RawMessage, error) {
 		if err := json.Unmarshal(eventRaw, &event); err != nil {
 			return nil, err
 		}
+		if event == nil {
+			return nil, errors.New("invalid event")
+		}
 		out := make(map[string]json.RawMessage, len(summaryFields))
 		for key, value := range event {
 			if summaryFields[key] {
+				var text string
+				if string(value) == "null" || json.Unmarshal(value, &text) != nil {
+					return nil, errors.New("invalid summary field")
+				}
 				out[key] = value
 			}
 		}
@@ -198,9 +222,81 @@ func summaryData(raw json.RawMessage) (json.RawMessage, error) {
 	return json.Marshal(filtered)
 }
 
+// publicEnvelope excludes unknown fields and dependency diagnostics from public responses.
+func publicEnvelope(body []byte, status int, summary bool) ([]byte, error) {
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(body, &envelope); err != nil || envelope == nil {
+		return nil, errors.New("invalid envelope")
+	}
+	data, hasData := envelope["data"]
+	sources, hasSources := envelope["sources"]
+	if !hasData && !hasSources && status == http.StatusServiceUnavailable {
+		return json.Marshal(map[string]any{"error": map[string]string{"code": "aggregator_unavailable"}})
+	}
+	if !hasData || !hasSources || string(data) == "null" || string(sources) == "null" {
+		return nil, errors.New("incomplete envelope")
+	}
+	var events []map[string]json.RawMessage
+	if err := json.Unmarshal(data, &events); err != nil {
+		return nil, err
+	}
+	if summary {
+		filtered, err := summaryData(data)
+		if err != nil {
+			return nil, err
+		}
+		data = filtered
+	}
+	var freshness []map[string]json.RawMessage
+	if err := json.Unmarshal(sources, &freshness); err != nil {
+		return nil, err
+	}
+	for _, source := range freshness {
+		var name, state string
+		if json.Unmarshal(source["source"], &name) != nil || (name != "BMKG" && name != "PVMBG") ||
+			json.Unmarshal(source["status"], &state) != nil || (state != "healthy" && state != "stale" && state != "unavailable") {
+			return nil, errors.New("invalid freshness")
+		}
+		for key, value := range source {
+			switch key {
+			case "source", "status":
+			case "last_success_at", "stale_since":
+				var timestamp *time.Time
+				if json.Unmarshal(value, &timestamp) != nil {
+					return nil, errors.New("invalid freshness time")
+				}
+			default:
+				delete(source, key)
+			}
+		}
+	}
+	return json.Marshal(struct {
+		Data    json.RawMessage              `json:"data"`
+		Sources []map[string]json.RawMessage `json:"sources"`
+	}{data, freshness})
+}
+
+func retryAfter(raw string) string {
+	if seconds, err := strconv.Atoi(raw); err == nil && seconds > 0 && seconds <= 3600 {
+		return strconv.Itoa(seconds)
+	}
+	if date, err := http.ParseTime(raw); err == nil && date.After(time.Now()) && date.Before(time.Now().Add(time.Hour)) {
+		return date.UTC().Format(http.TimeFormat)
+	}
+	return "1"
+}
+
 func (a *API) hazards(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed")
+		return
+	}
+	select {
+	case a.capacity <- struct{}{}:
+		defer func() { <-a.capacity }()
+	default:
+		w.Header().Set("Retry-After", "1")
+		writeError(w, http.StatusTooManyRequests, "capacity_exceeded")
 		return
 	}
 	jwt, ok := bearerValue(r.Header.Get("Authorization"))
@@ -239,6 +335,11 @@ func (a *API) hazards(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusTooManyRequests {
+		w.Header().Set("Retry-After", retryAfter(resp.Header.Get("Retry-After")))
+		writeError(w, http.StatusTooManyRequests, "capacity_exceeded")
+		return
+	}
 	const maxBody = 4 << 20
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
 	if err != nil || len(body) > maxBody {
@@ -253,27 +354,10 @@ func (a *API) hazards(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	var envelope map[string]json.RawMessage
-	if err := json.Unmarshal(body, &envelope); err != nil {
+	body, err = publicEnvelope(body, resp.StatusCode, view == "summary")
+	if err != nil {
 		writeError(w, http.StatusBadGateway, "aggregator_invalid_response")
 		return
-	}
-	data, hasData := envelope["data"]
-	_, hasSources := envelope["sources"]
-	if hasData && hasSources {
-		if view == "summary" {
-			filtered, err := summaryData(data)
-			if err != nil {
-				writeError(w, http.StatusBadGateway, "aggregator_invalid_response")
-				return
-			}
-			envelope["data"] = filtered
-		}
-		body, err = json.Marshal(envelope)
-		if err != nil {
-			writeError(w, http.StatusBadGateway, "aggregator_invalid_response")
-			return
-		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
@@ -289,7 +373,14 @@ func (a *API) health(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) Handler() http.Handler {
-	mux := http.NewServeMux()
+	a.capacityOnce.Do(func() {
+		limit := a.Config.RequestCapacity
+		if limit < 1 {
+			limit = 128
+		}
+		a.capacity = make(chan struct{}, limit)
+	})
+	mux := chi.NewRouter()
 	mux.HandleFunc("/hazards", a.hazards)
 	mux.HandleFunc("/health", a.health)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

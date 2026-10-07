@@ -2,8 +2,10 @@ package consumer
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,7 +31,42 @@ func OpenProcessedState(path string) (*ProcessedState, error) {
 		return nil, err
 	}
 	defer file.Close()
-	scanner := bufio.NewScanner(file)
+	// Only newline-terminated records are committed; discard a partial crash write.
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	committed := int64(0)
+	for offset := info.Size(); offset > 0; {
+		length := min(offset, 1024)
+		offset -= length
+		tail := make([]byte, length)
+		if _, err := file.ReadAt(tail, offset); err != nil {
+			return nil, err
+		}
+		if index := bytes.LastIndexByte(tail, '\n'); index >= 0 {
+			committed = offset + int64(index) + 1
+			break
+		}
+	}
+	if committed != info.Size() {
+		if err := os.Truncate(path, committed); err != nil {
+			return nil, err
+		}
+		repair, err := os.OpenFile(path, os.O_WRONLY, 0600)
+		if err != nil {
+			return nil, err
+		}
+		err = repair.Sync()
+		closeErr := repair.Close()
+		if err != nil {
+			return nil, err
+		}
+		if closeErr != nil {
+			return nil, closeErr
+		}
+	}
+	scanner := bufio.NewScanner(io.LimitReader(file, committed))
 	scanner.Buffer(make([]byte, 256), 1024)
 	for scanner.Scan() {
 		id := strings.TrimSpace(scanner.Text())
@@ -61,14 +98,23 @@ func (s *ProcessedState) Record(id string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	before, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return false, err
+	}
 	if _, err = fmt.Fprintln(f, id); err == nil {
 		err = f.Sync()
 	}
 	closeErr := f.Close()
 	if err != nil {
+		// A failed append must not leave a second committed record on retry.
+		_ = os.Truncate(s.path, before.Size())
 		return false, err
 	}
 	if closeErr != nil {
+		// Sync succeeded; keep the ID to prevent duplicate effects after reconnect.
+		s.ids[id] = struct{}{}
 		return false, closeErr
 	}
 	s.ids[id] = struct{}{}

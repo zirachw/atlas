@@ -4,9 +4,11 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -21,6 +23,23 @@ type AccessClaims struct {
 	IssuedAt     int64  `json:"iat"`
 	ExpiresAt    int64  `json:"exp"`
 	TokenID      string `json:"jti"`
+}
+
+func validSessionID(id string) bool {
+	if len(id) != 36 || id[8] != '-' || id[13] != '-' || id[18] != '-' || id[23] != '-' {
+		return false
+	}
+	raw, err := hex.DecodeString(strings.ReplaceAll(id, "-", ""))
+	return err == nil && len(raw) == 16
+}
+
+func validRefreshToken(token string) bool {
+	parts := strings.Split(token, ".")
+	if len(parts) != 2 || !validSessionID(parts[0]) {
+		return false
+	}
+	secret, err := base64.RawURLEncoding.DecodeString(parts[1])
+	return err == nil && len(secret) == 32
 }
 
 func newOpaqueToken() (string, error) {
