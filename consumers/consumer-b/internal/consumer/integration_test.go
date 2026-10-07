@@ -35,10 +35,10 @@ func TestIntegrationIndependentQueuesAndRestartCatchup(t *testing.T) {
 		t.Fatal(err)
 	}
 	queueA, queueB := fmt.Sprintf("integration.a.%x", suffix), fmt.Sprintf("integration.b.%x", suffix)
-	if _, err := ch.QueueDeclare(queueA, true, false, false, false, nil); err != nil {
+	if _, err := ch.QueueDeclare(queueA, true, false, false, false, (Config{}).queueArguments()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ch.QueueDeclare(queueB, true, false, false, false, nil); err != nil {
+	if _, err := ch.QueueDeclare(queueB, true, false, false, false, (Config{}).queueArguments()); err != nil {
 		t.Fatal(err)
 	}
 	if err := ch.ExchangeDeclare(exchangeName, "fanout", true, false, false, false, nil); err != nil {

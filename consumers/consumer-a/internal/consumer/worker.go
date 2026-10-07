@@ -56,14 +56,18 @@ func consumeOnce(ctx context.Context, cfg Config, state *ProcessedState, health 
 	if err = ch.ExchangeDeclare(exchangeName, "fanout", true, false, false, false, nil); err != nil {
 		return err
 	}
-	queue, err := ch.QueueDeclare(cfg.Queue, true, false, false, false, nil)
+	queue, err := ch.QueueDeclare(cfg.Queue, true, false, false, false, cfg.queueArguments())
 	if err != nil {
 		return err
 	}
 	if err = ch.QueueBind(queue.Name, "", exchangeName, false, nil); err != nil {
 		return err
 	}
-	if err = ch.Qos(1, 0, false); err != nil {
+	prefetch := cfg.Prefetch
+	if prefetch == 0 {
+		prefetch = 1
+	}
+	if err = ch.Qos(prefetch, 0, false); err != nil {
 		return err
 	}
 	deliveries, err := ch.Consume(queue.Name, cfg.Name, false, false, false, false, nil)
