@@ -56,9 +56,24 @@ func consumeOnce(ctx context.Context, cfg Config, state *ProcessedState, health 
 	if err = ch.ExchangeDeclare(exchangeName, "fanout", true, false, false, false, nil); err != nil {
 		return err
 	}
-	queue, err := ch.QueueDeclare(cfg.Queue, true, false, false, false, cfg.queueArguments())
+	// Reuse existing queues without changing their declaration arguments. This
+	// preserves legacy backlog; limits can be migrated separately via policy.
+	queue, err := ch.QueueInspect(cfg.Queue)
 	if err != nil {
-		return err
+		var brokerErr *amqp.Error
+		if !errors.As(err, &brokerErr) || brokerErr.Code != 404 {
+			return err
+		}
+		// A missing queue closes the inspection channel; create on a new one.
+		ch, err = conn.Channel()
+		if err != nil {
+			return err
+		}
+		defer ch.Close()
+		queue, err = ch.QueueDeclare(cfg.Queue, true, false, false, false, cfg.queueArguments())
+		if err != nil {
+			return err
+		}
 	}
 	if err = ch.QueueBind(queue.Name, "", exchangeName, false, nil); err != nil {
 		return err

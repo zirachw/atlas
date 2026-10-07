@@ -69,8 +69,8 @@ Every variable lives in `.env`, copied from `.env.example`. Compose passes each 
 | `CLIENT_API_REQUEST_CAPACITY` | Client API | Maximum active hazard requests; excess requests receive 429 and `Retry-After`. | `128` |
 | `CONSUMER_A_NAME`, `CONSUMER_A_QUEUE`, and the B and C equivalents | Consumers | Consumer name and durable queue. | `consumer-a`, `hazard.events.consumer-a` |
 | `CONSUMER_PREFETCH` | Consumers | Maximum outstanding unacknowledged deliveries. | `1` |
-| `CONSUMER_QUEUE_MAX_LENGTH`, `CONSUMER_QUEUE_MAX_BYTES` | Consumers | Maximum ready message count and payload bytes per queue. Overflow rejects new publications. | `10000`, `67108864` |
-| `CONSUMER_MESSAGE_TTL` | Consumers | Per-queue message retention; does not delete the queue when its consumer stops. | `1h` |
+| `CONSUMER_QUEUE_MAX_LENGTH`, `CONSUMER_QUEUE_MAX_BYTES` | Consumers | Limits applied when creating a new queue. Existing queues retain their configuration. Overflow rejects new publications. | `10000`, `67108864` |
+| `CONSUMER_MESSAGE_TTL` | Consumers | Retention applied when creating a new queue; does not delete the queue when its consumer stops. | `1h` |
 
 ## Source mocks
 
@@ -200,9 +200,44 @@ Refresh rotates the refresh token and increments the session token version. Reus
 
 Both consumers have separate durable queues and separate persistent idempotency files. The demonstration's stored effect is one ledger entry per `hazard_id`: the effect and duplicate marker are the same durable record. The consumer appends and syncs that record before ACK; a duplicate adds no record. On restart it reloads complete records and repairs an interrupted final append. Each ledger has one writer; it grows with processed IDs and is not designed for multiple replicas.
 
-The supported M1 demo outage is 30 seconds, at up to two events per second and payloads no larger than 32 KiB, with catch-up within 60 seconds after restart. Queues keep messages for one hour, bounded by 10,000 ready messages and 64 MiB of payload bytes. Beyond those bounds, TTL expires old messages or `reject-publish` returns a publisher NACK. Retries can deliver duplicate copies to other queues. See RabbitMQ's [queue limits](https://www.rabbitmq.com/docs/maxlength) and [message TTL](https://www.rabbitmq.com/docs/ttl). This is at-least-once processing of retained deliveries, with no unlimited outage or historical replay guarantee.
+The supported M1 demo outage is 30 seconds, at up to two events per second and payloads no larger than 32 KiB, with catch-up within 60 seconds after restart. Newly created queues keep messages for one hour, bounded by 10,000 ready messages and 64 MiB of payload bytes. Beyond those bounds, TTL expires old messages or `reject-publish` returns a publisher NACK. Retries can deliver duplicate copies to other queues. See RabbitMQ's [queue limits](https://www.rabbitmq.com/docs/maxlength) and [message TTL](https://www.rabbitmq.com/docs/ttl). This is at-least-once processing of retained deliveries, with no unlimited outage or historical replay guarantee.
 
-Queue arguments are fixed when the named queue is declared. Changing limits for an existing queue requires an explicit migration or a new queue name; do not delete a queue with pending messages. Queue/state paths are service environment settings. Compose assigns separate state volumes, including the optional third subscriber.
+Consumers inspect and reuse existing queues without redeclaring their arguments. This supports upgrades from the original queues without TTL/limits and preserves their backlog and names. Only a missing queue is created with the configured arguments. Changing `.env` limits does not alter an existing queue. Queue/state paths are service environment settings. Compose assigns separate state volumes, including the optional third subscriber.
+
+### Upgrade existing queues without losing backlog
+
+Keep the broker and consumer volumes, and keep the existing queue names and state paths. Queues from the original release have no TTL/limits; upgrading the consumers alone resumes their retained deliveries but leaves those queues unbounded. To apply the default bounds to those queues, drain them first and then use a RabbitMQ policy. Applying TTL immediately can expire old backlog; applying limits before draining can also discard messages or reject publications.
+
+Run these commands in Bash/WSL from the repo root. If Consumer C is active, include `consumer-c-demo` in the consumer rebuild, stop, start, and log commands below, and verify its queue is also drained.
+
+```sh
+# Pause publications and replace only the consumer containers.
+docker compose stop aggregator consumer-a consumer-b
+docker compose up -d --build --no-deps consumer-a consumer-b
+
+# Repeat until both consumer queues show messages_ready=0 and
+# messages_unacknowledged=0. Check logs for event_processed/duplicate_delivery.
+docker compose exec -T rabbitmq rabbitmqctl list_queues name messages_ready messages_unacknowledged consumers
+docker compose logs --since=5m consumer-a consumer-b
+
+# Once drained, stop consumers and check again: no messages should remain.
+docker compose stop consumer-a consumer-b
+docker compose exec -T rabbitmq rabbitmqctl list_queues name messages_ready messages_unacknowledged consumers
+
+# Apply bounds to the existing queues without deleting or renaming them.
+docker compose exec -T rabbitmq rabbitmqctl set_policy --apply-to queues --priority 10 \
+  atlas-consumer-limits '^hazard\.events\.consumer-[abc]$' \
+  '{"message-ttl":3600000,"max-length":10000,"max-length-bytes":67108864,"overflow":"reject-publish"}'
+docker compose exec -T rabbitmq rabbitmqctl list_policies
+
+# Resume consumers, then polling/publication.
+docker compose start consumer-a consumer-b
+docker compose start aggregator
+```
+
+Use the actual queue names in the policy pattern if `.env` overrides them, and set policy values to match the desired bounds (`message-ttl` is milliseconds). After the policy is installed, the retained-message limits apply to future traffic. If the backlog does not drain or processing reports storage errors, keep Aggregator stopped and resolve the failure before applying the policy. Do not delete queues or use `docker compose down -v` during this upgrade.
+
+Queues already created with explicit arguments retain those values; client arguments take precedence over a normal RabbitMQ policy. The passive reuse also supports restarting those queues after `.env` values change, but changing their effective limits needs a separate planned migration. See RabbitMQ's [policy precedence](https://www.rabbitmq.com/docs/4.2/queues#optional-arguments-and-policy-defined-key-precedence).
 
 Stop Consumer A while source events continue, and confirm Consumer B continues processing:
 
@@ -229,7 +264,7 @@ make ci
 make integration         # uses disposable PostgreSQL and RabbitMQ
 ```
 
-`make integration` runs the service-local PostgreSQL and RabbitMQ integration tests against disposable infrastructure, including refresh concurrency, consumer redelivery, queue limits, retention, and restart/catch-up. Use the startup, Auth and consumer commands above for full-stack demonstrations.
+`make integration` runs the service-local PostgreSQL and RabbitMQ integration tests against disposable infrastructure, including refresh concurrency, consumer redelivery, queue limits, retention, restart/catch-up, and upgrades of pre-existing queues with retained backlog. Use the startup, Auth and consumer commands above for full-stack demonstrations.
 
 ## Compose networks
 
