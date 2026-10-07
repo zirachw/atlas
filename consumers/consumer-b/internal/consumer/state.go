@@ -31,8 +31,7 @@ func OpenProcessedState(path string) (*ProcessedState, error) {
 		return nil, err
 	}
 	defer file.Close()
-	// A crash during append may leave an incomplete final record. Only complete
-	// newline-terminated records are committed effects; repair the tail first.
+	// Only newline-terminated records are committed; discard a partial crash write.
 	info, err := file.Stat()
 	if err != nil {
 		return nil, err
@@ -114,8 +113,7 @@ func (s *ProcessedState) Record(id string) (bool, error) {
 		return false, err
 	}
 	if closeErr != nil {
-		// Sync already committed the effect. Remember it even if closing failed,
-		// so a reconnect/redelivery cannot append it again in this process.
+		// Sync succeeded; keep the ID to prevent duplicate effects after reconnect.
 		s.ids[id] = struct{}{}
 		return false, closeErr
 	}

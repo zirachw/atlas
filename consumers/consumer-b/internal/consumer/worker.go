@@ -56,8 +56,7 @@ func consumeOnce(ctx context.Context, cfg Config, state *ProcessedState, health 
 	if err = ch.ExchangeDeclare(exchangeName, "fanout", true, false, false, false, nil); err != nil {
 		return err
 	}
-	// Reuse existing queues without changing their declaration arguments. This
-	// preserves legacy backlog; limits can be migrated separately via policy.
+	// Preserve existing queue arguments and backlog across upgrades.
 	queue, err := ch.QueueInspect(cfg.Queue)
 	if err != nil {
 		var brokerErr *amqp.Error

@@ -160,7 +160,6 @@ func TestIntegrationUpgradePreservesExistingQueueAndBacklog(t *testing.T) {
 			waitFor("upgrade-already-processed", "upgrade-backlog-1", "upgrade-backlog-2")
 			publish("upgrade-live-event")
 			waitFor("upgrade-already-processed", "upgrade-backlog-1", "upgrade-backlog-2", "upgrade-live-event")
-			// Old queues retain their properties; new queues get configured bounds.
 			wantArgs := tc.args
 			if tc.newQueue {
 				wantArgs = cfg.queueArguments()

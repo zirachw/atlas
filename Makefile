@@ -4,7 +4,6 @@ SHELL := bash
 
 .PHONY: help setup quality fmt test build security ci dev start stop logs
 
-# Run a command in each Go module. Keep nested service modules supported.
 define in_modules
 @mapfile -d '' -t modules < <( \
 	find . -type d \( -name .git -o -name vendor -o -name docs \) -prune \

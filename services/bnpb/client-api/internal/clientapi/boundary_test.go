@@ -108,7 +108,6 @@ func TestAdmissionLimitDoesNotCallDependenciesAndReleasesCapacity(t *testing.T) 
 	if w = <-done; w.Code != 200 {
 		t.Fatalf("first=%d", w.Code)
 	}
-	// A failed Auth call also releases the permit.
 	a.Client.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) { return nil, errors.New("offline") })
 	for i := 0; i < 2; i++ {
 		if w = request(); w.Code != 503 {

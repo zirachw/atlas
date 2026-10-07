@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Credentials are supplied by the environment.
 set -euo pipefail
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
  --set=canonical_password="$CANONICAL_DB_PASSWORD" --set=auth_password="$AUTH_DB_PASSWORD" <<'SQL'

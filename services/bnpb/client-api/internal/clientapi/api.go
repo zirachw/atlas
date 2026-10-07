@@ -222,8 +222,7 @@ func summaryData(raw json.RawMessage) (json.RawMessage, error) {
 	return json.Marshal(filtered)
 }
 
-// Rebuild the envelope from the transport contract. Unknown fields never cross
-// the public boundary, even in freshness metadata or dependency errors.
+// publicEnvelope excludes unknown fields and dependency diagnostics from public responses.
 func publicEnvelope(body []byte, status int, summary bool) ([]byte, error) {
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal(body, &envelope); err != nil || envelope == nil {
@@ -232,7 +231,6 @@ func publicEnvelope(body []byte, status int, summary bool) ([]byte, error) {
 	data, hasData := envelope["data"]
 	sources, hasSources := envelope["sources"]
 	if !hasData && !hasSources && status == http.StatusServiceUnavailable {
-		// Dependency diagnostics are never exposed as arbitrary strings or JSON.
 		return json.Marshal(map[string]any{"error": map[string]string{"code": "aggregator_unavailable"}})
 	}
 	if !hasData || !hasSources || string(data) == "null" || string(sources) == "null" {

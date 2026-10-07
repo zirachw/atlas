@@ -20,7 +20,7 @@ func run(log *slog.Logger) error {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	// Go keeps only 2 idle connections per host by default, so load would open a new socket for most calls to Auth and Aggregator.
+	// Reuse Auth and Aggregator connections under concurrent load.
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxIdleConnsPerHost = 128
 	transport.MaxConnsPerHost = cfg.RequestCapacity
