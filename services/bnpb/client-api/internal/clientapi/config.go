@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -17,6 +18,7 @@ type Config struct {
 	Issuer, Audience                                                string
 	PublicKey                                                       ed25519.PublicKey
 	OutboundTimeout                                                 time.Duration
+	RequestCapacity                                                 int
 }
 
 func decodeBase64(raw string) ([]byte, error) {
@@ -81,6 +83,13 @@ func ConfigFromEnv() (Config, error) {
 		c.OutboundTimeout, err = time.ParseDuration(raw)
 		if err != nil || c.OutboundTimeout < time.Second || c.OutboundTimeout > time.Minute {
 			return c, errors.New("invalid CLIENT_API_OUTBOUND_TIMEOUT")
+		}
+	}
+	c.RequestCapacity = 128
+	if raw := os.Getenv("CLIENT_API_REQUEST_CAPACITY"); raw != "" {
+		c.RequestCapacity, err = strconv.Atoi(raw)
+		if err != nil || c.RequestCapacity < 1 || c.RequestCapacity > 10000 {
+			return c, errors.New("invalid CLIENT_API_REQUEST_CAPACITY")
 		}
 	}
 	return c, nil

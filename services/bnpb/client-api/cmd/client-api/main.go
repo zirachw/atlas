@@ -23,8 +23,9 @@ func run(log *slog.Logger) error {
 	// Go keeps only 2 idle connections per host by default, so load would open a new socket for most calls to Auth and Aggregator.
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxIdleConnsPerHost = 128
+	transport.MaxConnsPerHost = cfg.RequestCapacity
 	api := &clientapi.API{Config: cfg, Client: &http.Client{Transport: transport, Timeout: cfg.OutboundTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, Log: log}
-	server := &http.Server{Addr: cfg.Address, Handler: api.Handler(), ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: cfg.OutboundTimeout + time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
+	server := &http.Server{Addr: cfg.Address, Handler: api.Handler(), ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 2*cfg.OutboundTimeout + time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
 	done := make(chan error, 1)
 	go func() { done <- server.ListenAndServe() }()
 	log.Info("started", "service", "client-api", "address", cfg.Address)
