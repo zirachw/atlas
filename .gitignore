@@ -6,3 +6,7 @@
 coverage.out
 /bin/
 /evidence/local/
+
+# Generated full-stack logs stay local; commit only compact acceptance evidence.
+/services/bnpb/aggregator/evidence/*.jsonl
+/scripts/__pycache__/

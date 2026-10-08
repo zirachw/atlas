@@ -259,12 +259,21 @@ docker compose --profile consumer-c-demo stop consumer-c-demo
 ## Checks
 
 ```sh
-make setup
-make ci
-make integration         # uses disposable PostgreSQL and RabbitMQ
+make ci           # unit tests, quality, build, security
+make integration  # database and broker integration
+make e2e          # full-stack checks
+make e2e-p2       # full-stack checks with load testing
 ```
 
-`make integration` runs the service-local PostgreSQL and RabbitMQ integration tests against disposable infrastructure, including refresh concurrency, consumer redelivery, queue limits, retention, restart/catch-up, and upgrades of pre-existing queues with retained backlog. Use the startup, Auth and consumer commands above for full-stack demonstrations.
+Full-stack testing passed all 16 checks. Under load, BMKG reads reached p95 **64.2 ms** with **0% errors** while PVMBG responses took three seconds.
+
+![Full-stack test results](docs/evidence/e2e-summary.png)
+
+![Load test results](docs/evidence/p2-summary.png)
+
+[Detailed results](services/bnpb/aggregator/evidence/summary.json) · [Load metrics](services/bnpb/aggregator/evidence/p2-k6.json)
+
+The save/publish crash test confirms the known M1 limitation: stored data survives, but an event can be lost before publication. The outbox is deferred.
 
 ## Compose networks
 

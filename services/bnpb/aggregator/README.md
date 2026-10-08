@@ -20,9 +20,15 @@ curl -H "Authorization: Bearer $AGGREGATOR_INTERNAL_TOKEN" \
 
 ## Checks
 
-From the repository root.
+Run from the repository root:
 
 ```sh
 make ci
 make integration
+make e2e
+make e2e-p2
 ```
+
+Full-stack tests cover ingestion, schema changes, protected reads, outage recovery, fanout and restart persistence. Results are saved under [evidence/](evidence/).
+
+Persistence and publication are separate. A crash after commit can leave a stored event unpublished; the integration test verifies this M1 limitation.

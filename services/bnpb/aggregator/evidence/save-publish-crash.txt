@@ -1,0 +1,5 @@
+Base commit fa0786e; new test on local working tree; 7 October 2026 WIB.
+Command: make integration
+=== RUN   TestIntegrationSavePublishProcessCrash
+    crash_integration_test.go:150: process_exit=77 committed_hazard_id=e266c012da3e6777f82c3958f6189a357a069ec986103711903f9b56e5f82250 checkpoint=2026-09-30T07:00:00+07:00 replay_publications=0 control_hazard_id=2275536ca78626e3f33b1250d69f83ea5b88f4f53c7b4f5ae5f8fcf49deae10e confirmed=true; known M1 save/publish loss reproduced
+--- PASS: TestIntegrationSavePublishProcessCrash (0.18s)
