@@ -89,9 +89,13 @@ func TestIntegrationIndependentQueuesAndRestartCatchup(t *testing.T) {
 		t.Fatalf("timeout waiting for %s", description)
 	}
 	waitFor(func() bool { return healthA.Ready() && healthB.Ready() }, "both consumers to bind")
-	publish := func(id string) {
+	publish := func(id string, revisions ...int64) {
 		t.Helper()
-		raw, _ := json.Marshal(map[string]string{"hazard_id": id})
+		revision := int64(1)
+		if len(revisions) > 0 {
+			revision = revisions[0]
+		}
+		raw, _ := json.Marshal(hazardMessage{HazardID: id, Revision: revision})
 		if err := ch.PublishWithContext(context.Background(), exchangeName, "", false, false, amqp.Publishing{DeliveryMode: amqp.Persistent, ContentType: "application/json", CorrelationId: "integration-correlation", Body: raw}); err != nil {
 			t.Fatal(err)
 		}
@@ -104,6 +108,11 @@ func TestIntegrationIndependentQueuesAndRestartCatchup(t *testing.T) {
 	waitFor(func() bool {
 		return contains(cfgA.StatePath, "integration-1") && contains(cfgB.StatePath, "integration-1")
 	}, "both independent queues to process the first event")
+	publish("integration-1", 2)
+	publish("integration-1", 2)
+	waitFor(func() bool {
+		return contains(cfgA.StatePath, "integration-1:2") && contains(cfgB.StatePath, "integration-1:2")
+	}, "both consumers to process the new revision")
 	cancelA()
 	select {
 	case <-doneA:
@@ -128,6 +137,12 @@ func TestIntegrationIndependentQueuesAndRestartCatchup(t *testing.T) {
 	case <-doneA2:
 	case <-time.After(5 * time.Second):
 		t.Fatal("restarted Consumer A did not stop")
+	}
+	for _, path := range []string{cfgA.StatePath, cfgB.StatePath} {
+		raw, err := os.ReadFile(path)
+		if err != nil || strings.Count(string(raw), "integration-1:2\n") != 1 {
+			t.Fatal("revision duplicate effect", string(raw), err)
+		}
 	}
 	cancelB()
 	select {

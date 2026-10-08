@@ -51,8 +51,13 @@ func TestIntegrationStoreCommitRollbackRestartAndOwnership(t *testing.T) {
 	h.IngestedAt = now.Add(time.Hour)
 	h.Attributes["confidence_level"] = json.RawMessage("0.8")
 	created, e = s.Save(ctx, "PVMBG", []HazardEvent{h}, &h.OccurredAt, now)
-	if e != nil || len(created) != 0 {
+	if e != nil || len(created) != 1 || created[0].Revision != 2 {
 		t.Fatal(created, e)
+	}
+	h.Attributes["confidence_level"] = json.RawMessage(" 0.8 ")
+	unchanged, err := s.Save(ctx, "PVMBG", []HazardEvent{h}, &h.OccurredAt, now)
+	if err != nil || len(unchanged) != 0 {
+		t.Fatal("unchanged JSON published", unchanged, err)
 	}
 	newer, e := MapVolcanic(fixture(t, "volcanic-v2.json")[0], now)
 	if e != nil {
@@ -202,8 +207,19 @@ func TestIntegrationLivePollingMappingFreshnessAndReads(t *testing.T) {
 	if e := b.Poll(ctx, "live-schema"); e != nil {
 		t.Fatal(e)
 	}
-	if len(pending) != 1 {
-		t.Fatal("duplicate fetch republished", len(pending))
+	if len(pending) != 2 {
+		t.Fatal("missing late warning revision or new volcanic event", len(pending))
+	}
+	update := <-pending
+	if !oldIDs[update.Event.HazardID] || update.Event.Revision != 2 || update.Event.Severity != "AWAS" {
+		t.Fatal("late warning publication", update)
+	}
+	<-pending
+	if e := a.Poll(ctx, "same-warning"); e != nil {
+		t.Fatal(e)
+	}
+	if len(pending) != 0 {
+		t.Fatal("unchanged warning republished")
 	}
 	data, e := s.Read(ctx, Query{Source: "PVMBG", Limit: 100})
 	if e != nil || len(data.Data) != 2 {
@@ -328,11 +344,30 @@ func TestIntegrationRabbitFanoutConfirmAndReconnect(t *testing.T) {
 		if e = json.Unmarshal(msg.Body, &got); e != nil {
 			t.Fatal(e)
 		}
-		if got.HazardID != h.HazardID || msg.MessageId != h.HazardID || msg.CorrelationId != "broker-test" || msg.DeliveryMode != amqp.Persistent {
+		if got.HazardID != h.HazardID || msg.MessageId != h.HazardID+":1" || msg.CorrelationId != "broker-test" || msg.DeliveryMode != amqp.Persistent {
 			t.Fatal("message identity or metadata lost")
 		}
 		if e = msg.Ack(false); e != nil {
 			t.Fatal(e)
+		}
+	}
+	// Publish an updated snapshot with a distinct revision identity to both queues.
+	item.Event.Revision = 2
+	item.Event.Severity = "AWAS"
+	if e = p.Publish(context.Background(), item); e != nil {
+		t.Fatal(e)
+	}
+	for _, q := range queues {
+		msg, ok, err := ch.Get(q, true)
+		if err != nil || !ok {
+			t.Fatal(q, ok, err)
+		}
+		var got HazardEvent
+		if err = json.Unmarshal(msg.Body, &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.HazardID != h.HazardID || got.Revision != 2 || got.Severity != "AWAS" || msg.MessageId != h.HazardID+":2" {
+			t.Fatal("update metadata or payload lost", got)
 		}
 	}
 	// Drop the actual network connection, then publish through a reconnected channel.

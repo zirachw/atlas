@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"time"
@@ -81,7 +82,7 @@ func (p *RabbitPublisher) Publish(ctx context.Context, item Publication) error {
 	}
 	// Socket deadlines bound AMQP writes and RPCs as well as confirmation waits.
 	confirm, e := p.channel.PublishWithDeferredConfirmWithContext(ctx, Exchange, "", false, false, amqp.Publishing{
-		DeliveryMode: amqp.Persistent, ContentType: "application/json", Type: "HazardEvent", MessageId: item.Event.HazardID, CorrelationId: item.CorrelationID, Timestamp: time.Now().UTC(), Body: raw,
+		DeliveryMode: amqp.Persistent, ContentType: "application/json", Type: "HazardEvent", MessageId: fmt.Sprintf("%s:%d", item.Event.HazardID, item.Event.Revision), CorrelationId: item.CorrelationID, Timestamp: time.Now().UTC(), Body: raw,
 	})
 	if e == nil && confirm != nil {
 		var ack bool
@@ -124,12 +125,12 @@ func (w *PublishWorker) send(ctx context.Context, item Publication) bool {
 		start := time.Now()
 		e := w.Publisher.Publish(callCtx, item)
 		cancel()
-		w.Log.Info("broker_call", "service", "aggregator", "correlation_id", item.CorrelationID, "hazard_id", item.Event.HazardID, "source", item.Event.Source, "dependency", "rabbitmq", "latency_ms", time.Since(start).Milliseconds(), "attempt", attempt+1, "confirmed", e == nil)
+		w.Log.Info("broker_call", "service", "aggregator", "correlation_id", item.CorrelationID, "hazard_id", item.Event.HazardID, "revision", item.Event.Revision, "source", item.Event.Source, "dependency", "rabbitmq", "latency_ms", time.Since(start).Milliseconds(), "attempt", attempt+1, "confirmed", e == nil)
 		if e == nil {
 			return true
 		}
 	}
-	w.Log.Error("publication_dropped", "service", "aggregator", "hazard_id", item.Event.HazardID, "correlation_id", item.CorrelationID, "reason", "retries_exhausted")
+	w.Log.Error("publication_dropped", "service", "aggregator", "hazard_id", item.Event.HazardID, "revision", item.Event.Revision, "correlation_id", item.CorrelationID, "reason", "retries_exhausted")
 	return false
 }
 func (w *PublishWorker) Run(ctx context.Context) {

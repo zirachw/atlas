@@ -120,3 +120,14 @@ func (s *ProcessedState) Record(id string) (bool, error) {
 	s.ids[id] = struct{}{}
 	return true, nil
 }
+
+// Missing revisions and legacy ledger entries represent revision 1.
+func (s *ProcessedState) RecordRevision(id string, revision int64) (bool, error) {
+	if !validHazardID(id) || revision < 0 {
+		return false, errors.New("invalid hazard revision")
+	}
+	if revision <= 1 {
+		return s.Record(id)
+	}
+	return s.Record(fmt.Sprintf("%s:%d", id, revision))
+}

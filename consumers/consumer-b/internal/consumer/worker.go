@@ -36,6 +36,7 @@ func (h *Health) Handler() http.Handler {
 
 type hazardMessage struct {
 	HazardID string `json:"hazard_id"`
+	Revision int64  `json:"revision"`
 }
 
 func consumeOnce(ctx context.Context, cfg Config, state *ProcessedState, health *Health, log *slog.Logger) error {
@@ -100,8 +101,8 @@ func consumeOnce(ctx context.Context, cfg Config, state *ProcessedState, health 
 				return errors.New("broker delivery stream closed")
 			}
 			var message hazardMessage
-			if err := json.Unmarshal(delivery.Body, &message); err != nil || !validHazardID(message.HazardID) {
-				log.Warn("message_rejected", "service", cfg.Name, "queue", cfg.Queue, "correlation_id", delivery.CorrelationId, "hazard_id", message.HazardID, "reason", "invalid_message")
+			if err := json.Unmarshal(delivery.Body, &message); err != nil || !validHazardID(message.HazardID) || message.Revision < 0 {
+				log.Warn("message_rejected", "service", cfg.Name, "queue", cfg.Queue, "correlation_id", delivery.CorrelationId, "hazard_id", message.HazardID, "revision", message.Revision, "reason", "invalid_message")
 				ackStart := time.Now()
 				if err := delivery.Nack(false, false); err != nil {
 					return err
@@ -109,20 +110,23 @@ func consumeOnce(ctx context.Context, cfg Config, state *ProcessedState, health 
 				log.Info("broker_ack", "service", cfg.Name, "dependency", "rabbitmq", "queue", cfg.Queue, "correlation_id", delivery.CorrelationId, "acknowledged", false, "requeued", false, "latency_ms", time.Since(ackStart).Milliseconds())
 				continue
 			}
-			processed, err := state.Record(message.HazardID)
+			if message.Revision == 0 {
+				message.Revision = 1
+			}
+			processed, err := state.RecordRevision(message.HazardID, message.Revision)
 			if err != nil {
 				return err
 			}
 			if processed {
-				log.Info("event_processed", "service", cfg.Name, "queue", cfg.Queue, "hazard_id", message.HazardID, "correlation_id", delivery.CorrelationId)
+				log.Info("event_processed", "service", cfg.Name, "queue", cfg.Queue, "hazard_id", message.HazardID, "revision", message.Revision, "correlation_id", delivery.CorrelationId)
 			} else {
-				log.Info("duplicate_delivery", "service", cfg.Name, "queue", cfg.Queue, "hazard_id", message.HazardID, "correlation_id", delivery.CorrelationId)
+				log.Info("duplicate_delivery", "service", cfg.Name, "queue", cfg.Queue, "hazard_id", message.HazardID, "revision", message.Revision, "correlation_id", delivery.CorrelationId)
 			}
 			ackStart := time.Now()
 			if err := delivery.Ack(false); err != nil {
 				return err
 			}
-			log.Info("broker_ack", "service", cfg.Name, "dependency", "rabbitmq", "queue", cfg.Queue, "hazard_id", message.HazardID, "correlation_id", delivery.CorrelationId, "acknowledged", true, "latency_ms", time.Since(ackStart).Milliseconds())
+			log.Info("broker_ack", "service", cfg.Name, "dependency", "rabbitmq", "queue", cfg.Queue, "hazard_id", message.HazardID, "revision", message.Revision, "correlation_id", delivery.CorrelationId, "acknowledged", true, "latency_ms", time.Since(ackStart).Milliseconds())
 		}
 	}
 }
