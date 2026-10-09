@@ -133,6 +133,8 @@ CLIENT_ID=$INTERNAL_OPS_CLIENT_ID CLIENT_SECRET=$INTERNAL_OPS_CLIENT_SECRET k6 r
 
 The sustained scenario runs 40 BMKG-only and 20 volcanic virtual users for 90 seconds. Each user keeps its own connection and refreshes its token before the 60-second TTL ends. The burst scenario runs 400 users for 20 seconds, which exceeds Client API capacity and must produce counted 429 responses without unexpected errors.
 
+The demo records timestamped connection samples and requires an observed interval of at least 60 seconds with 50 or more connections at every sample. A count below 50 or a sampling gap longer than five seconds resets the interval. Samples are saved in `evidence/p2-sustained-connections.json`; the demo report records the longest qualifying interval.
+
 | Variable | Default | Meaning |
 |---|---|---|
 | `SCENARIO` | `sustained` | `sustained` for P2.1 and P2.2, or `burst` for controlled rejection. |

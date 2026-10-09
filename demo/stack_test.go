@@ -78,7 +78,7 @@ func startStack() (*stack, error) {
 	if _, err := s.compose("up", "-d", "--build", "--wait", "--wait-timeout", "300", "postgres", "rabbitmq", "bmkg", "pvmbg", "auth", "consumer-a", "consumer-b"); err != nil {
 		return nil, err
 	}
-	if _, err := s.compose("up", "-d", "--wait", "--wait-timeout", "180", "aggregator", "client-api"); err != nil {
+	if _, err := s.compose("up", "-d", "--build", "--wait", "--wait-timeout", "180", "aggregator", "client-api"); err != nil {
 		return nil, err
 	}
 	return s, s.resolvePorts()

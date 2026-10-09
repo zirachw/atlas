@@ -123,15 +123,9 @@ func checkSustainedLoad(t *testing.T, ev map[string]any) {
 	} else {
 		ev["pvmbg_call_ms"] = slow[0]["latency_ms"]
 	}
-	// Samples come every 2s, so 30 samples above 50 cover 60s of sustained load.
-	held := 0
-	for _, c := range samples {
-		if c >= 50 {
-			held++
-		}
-	}
-	if held < 30 {
-		t.Errorf("only %d of %d samples held 50+ connections, want 30 (60s)", held, len(samples))
+	span := longestConnectionSpan(samples, 50, 5*time.Second)
+	if span < time.Minute {
+		t.Errorf("longest observed interval with 50+ connections was %s, want at least 60s", span)
 	}
 	if rate := metric(metrics, "unexpected_errors", "rate"); rate >= 0.01 {
 		t.Errorf("unexpected error rate %.4f, want below 0.01", rate)
@@ -144,8 +138,9 @@ func checkSustainedLoad(t *testing.T, ev map[string]any) {
 	ev["requests_per_second"] = metric(metrics, "http_reqs{kind:bmkg}", "rate") + metric(metrics, "http_reqs{kind:volcanic}", "rate")
 	ev["unexpected_error_rate"] = metric(metrics, "unexpected_errors", "rate")
 	ev["controlled_rejections"] = metric(metrics, "controlled_rejections", "count")
-	ev["seconds_with_50_connections"] = held * 2
-	ev["files"] = "p2-sustained.json, p2-sustained.txt"
+	ev["seconds_with_50_connections"] = span.Seconds()
+	ev["connection_samples"] = samples
+	ev["files"] = "p2-sustained.json, p2-sustained.txt, p2-sustained-connections.json"
 }
 
 func checkOverload(t *testing.T, ev map[string]any) {
@@ -165,7 +160,7 @@ func checkOverload(t *testing.T, ev map[string]any) {
 }
 
 // runK6 runs loadtest/p2.js inside the Compose network and samples Client API connections every 2s.
-func runK6(t *testing.T, scenario string) (map[string]any, []int) {
+func runK6(t *testing.T, scenario string) (map[string]any, []connectionSample) {
 	t.Helper()
 	if out, err := exec.Command("docker", "pull", "-q", k6Image).CombinedOutput(); err != nil {
 		t.Fatalf("pull %s: %v %s", k6Image, err, out)
@@ -195,7 +190,7 @@ func runK6(t *testing.T, scenario string) (map[string]any, []int) {
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
-	samples := []int{}
+	samples := []connectionSample{}
 	for {
 		select {
 		case err := <-done:
@@ -213,10 +208,18 @@ func runK6(t *testing.T, scenario string) (map[string]any, []int) {
 			if err := json.Unmarshal(raw, &summary); err != nil {
 				t.Fatal(err)
 			}
+			raw, err = json.MarshalIndent(samples, "", "  ")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(results, "p2-"+scenario+"-connections.json"), append(raw, '\n'), 0o644); err != nil {
+				t.Fatal(err)
+			}
 			t.Log(tail(output.String(), 1500))
 			return summary.Metrics, samples
 		case <-time.After(2 * time.Second):
-			samples = append(samples, clientConnections(t))
+			connections := clientConnections(t)
+			samples = append(samples, connectionSample{At: time.Now(), Connections: connections})
 		}
 	}
 }

@@ -67,7 +67,7 @@ func checkNewConsumer(t *testing.T, ev map[string]any) {
 	s.ready(t)
 	aggregator := s.containerID(t, "aggregator")
 	since := time.Now().Add(-time.Second)
-	s.mustCompose(t, "--profile", "consumer-c-demo", "up", "-d", "--wait", "--wait-timeout", "120", "consumer-c-demo")
+	s.mustCompose(t, "--profile", "consumer-c-demo", "up", "-d", "--build", "--wait", "--wait-timeout", "120", "consumer-c-demo")
 	var shared string
 	eventually(t, 60*time.Second, "the new consumer processing a new event", func() bool {
 		b, c := s.processed(t, "consumer-b", since), s.processed(t, "consumer-c-demo", since)
