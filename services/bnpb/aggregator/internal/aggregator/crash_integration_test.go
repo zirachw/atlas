@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -141,8 +142,16 @@ func TestIntegrationSavePublishProcessCrash(t *testing.T) {
 		t.Fatal(err)
 	}
 	msg, ok, err := ch.Get(q.Name, true)
-	if err != nil || !ok || msg.MessageId != item.Event.HazardID {
+	expectedID := fmt.Sprintf("%s:%d", item.Event.HazardID, item.Event.Revision)
+	if err != nil || !ok || msg.MessageId != expectedID {
 		t.Fatal("new event did not reach broker", ok, err)
+	}
+	var published HazardEvent
+	if err := json.Unmarshal(msg.Body, &published); err != nil {
+		t.Fatal(err)
+	}
+	if published.HazardID != item.Event.HazardID || published.Revision != item.Event.Revision {
+		t.Fatal("control event identity or revision changed", published)
 	}
 	if _, ok, err = ch.Get(q.Name, true); err != nil || ok {
 		t.Fatal("unexpected replay after recovery", ok, err)
