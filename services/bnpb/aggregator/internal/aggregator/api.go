@@ -107,7 +107,10 @@ func (a *API) Handler() http.Handler {
 	mux.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), a.Timeout)
 		defer cancel()
-		if a.Store.Health(ctx) != nil {
+		start := time.Now()
+		err := a.Store.Health(ctx)
+		logDatabaseCall(a.Log, r.Header.Get("X-Correlation-ID"), "health", start, err)
+		if err != nil {
 			writeError(w, 503, "store_unavailable")
 			return
 		}
@@ -134,7 +137,9 @@ func (a *API) Handler() http.Handler {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), a.Timeout)
 		defer cancel()
+		start := time.Now()
 		result, e := a.Store.Read(ctx, q)
+		logDatabaseCall(a.Log, r.Header.Get("X-Correlation-ID"), "read", start, e)
 		if e != nil {
 			writeError(w, 503, "store_unavailable")
 			return

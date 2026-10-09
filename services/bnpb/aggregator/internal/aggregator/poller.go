@@ -153,7 +153,9 @@ func (p *Poller) fetchWarnings(ctx context.Context, checkpoint *time.Time, id st
 	return warnings, nil
 }
 func (p *Poller) Poll(ctx context.Context, id string) error {
+	start := time.Now()
 	checkpoint, e := p.Store.Checkpoint(ctx, p.Source)
+	logDatabaseCall(p.Log, id, "checkpoint", start, e)
 	if e != nil {
 		return errors.New("checkpoint read failed")
 	}
@@ -203,7 +205,9 @@ func (p *Poller) Poll(ctx context.Context, id string) error {
 		}
 	}
 	if len(refs) > 0 {
+		start = time.Now()
 		old, e := p.Store.WarningEvents(ctx, refs)
+		logDatabaseCall(p.Log, id, "warning_events", start, e)
 		if e != nil {
 			return errors.New("warning lookup failed")
 		}
@@ -211,7 +215,9 @@ func (p *Poller) Poll(ctx context.Context, id string) error {
 			events = append(events, ApplyWarnings(h, warnings))
 		}
 	}
+	start = time.Now()
 	changed, e := p.Store.Save(ctx, p.Source, events, checkpoint, time.Now().UTC())
+	logDatabaseCall(p.Log, id, "save", start, e)
 	if e != nil {
 		return errors.New("canonical commit failed")
 	}
@@ -234,7 +240,9 @@ func (p *Poller) Run(ctx context.Context) {
 		cancel()
 		if e != nil && ctx.Err() == nil {
 			failureCtx, stop := context.WithTimeout(ctx, 2*time.Second)
+			start := time.Now()
 			markErr := p.Store.Failure(failureCtx, p.Source, time.Now().UTC())
+			logDatabaseCall(p.Log, id, "failure", start, markErr)
 			stop()
 			p.Log.Warn("poll_failed", "service", "aggregator", "source", p.Source, "correlation_id", id, "reason", e.Error(), "freshness_saved", markErr == nil)
 		}
