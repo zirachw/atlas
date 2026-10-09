@@ -17,7 +17,7 @@ import (
 const correlationHeader = "X-Correlation-ID"
 
 type API struct {
-	Store  *Store
+	Store  Store
 	APIKey string
 	Delay  time.Duration
 	Log    *slog.Logger
@@ -27,22 +27,45 @@ func (a *API) Handler() http.Handler {
 	r := chi.NewRouter()
 	r.Use(a.logRequest)
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), time.Second)
+		defer cancel()
+		if err := a.Store.Health(ctx); err != nil {
+			writeError(w, http.StatusServiceUnavailable, "store_unavailable")
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(a.authenticate, a.delay)
-		r.Get("/seismic-events", func(w http.ResponseWriter, r *http.Request) {
-			if since, ok := parseSince(w, r); ok {
-				writeJSON(w, http.StatusOK, a.Store.Events(since))
-			}
-		})
-		r.Get("/tsunami-warnings", func(w http.ResponseWriter, r *http.Request) {
-			if since, ok := parseSince(w, r); ok {
-				writeJSON(w, http.StatusOK, a.Store.Warnings(since))
-			}
-		})
+		r.Get("/seismic-events", read(a, "read_seismic_events", a.Store.Events))
+		r.Get("/tsunami-warnings", read(a, "read_tsunami_warnings", a.Store.Warnings))
 	})
 	return r
+}
+
+func read[T any](a *API, operation string, query func(context.Context, *time.Time) ([]T, error)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		since, ok := parseSince(w, r)
+		if !ok {
+			return
+		}
+		start := time.Now()
+		records, err := query(r.Context(), since)
+		a.logDB(r, operation, start, err)
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, "store_unavailable")
+			return
+		}
+		writeJSON(w, http.StatusOK, records)
+	}
+}
+
+func (a *API) logDB(r *http.Request, operation string, start time.Time, err error) {
+	reason := ""
+	if err != nil {
+		reason = "store_error"
+	}
+	a.Log.Info("database_call", "service", "bmkg", "dependency", "bmkg_store", "operation", operation, "correlation_id", r.Header.Get(correlationHeader), "latency_ms", time.Since(start).Milliseconds(), "reason", reason)
 }
 
 // No X-BMKG-Key (e.g. a PVMBG bearer token) gets 401. A wrong key gets 403.

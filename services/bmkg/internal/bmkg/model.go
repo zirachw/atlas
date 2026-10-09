@@ -1,6 +1,10 @@
 package bmkg
 
-import "time"
+import (
+	"errors"
+	"fmt"
+	"time"
+)
 
 type SeismicEvent struct {
 	EventID          string    `json:"event_id"`
@@ -22,3 +26,27 @@ type TsunamiWarning struct {
 }
 
 var threatLevels = map[string]bool{"Waspada": true, "Siaga": true, "Awas": true}
+
+// The spec issues TsunamiWarning only for events with potential_tsunami = true.
+func validate(event SeismicEvent, warnings []TsunamiWarning) error {
+	if event.EventID == "" {
+		return errors.New("event_id is required")
+	}
+	seen := map[string]bool{}
+	for _, w := range warnings {
+		switch {
+		case w.WarningID == "":
+			return errors.New("warning_id is required")
+		case seen[w.WarningID]:
+			return fmt.Errorf("duplicate warning_id %s", w.WarningID)
+		case w.RelatedEventID != event.EventID:
+			return fmt.Errorf("warning %s does not relate to event %s", w.WarningID, event.EventID)
+		case !event.PotentialTsunami:
+			return fmt.Errorf("warning %s relates to event %s without potential_tsunami", w.WarningID, event.EventID)
+		case !threatLevels[w.ThreatLevel]:
+			return fmt.Errorf("warning %s has invalid threat_level %q", w.WarningID, w.ThreatLevel)
+		}
+		seen[w.WarningID] = true
+	}
+	return nil
+}

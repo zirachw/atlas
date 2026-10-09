@@ -20,13 +20,17 @@ var tokenFormat = regexp.MustCompile(`^pvmbg\.[a-z0-9-]{1,32}\.[A-Za-z0-9_-]{16,
 
 type Config struct {
 	Address            string
+	DatabaseURL        string
 	Token              string
 	MinDelay, MaxDelay time.Duration
 	EventInterval      time.Duration
 }
 
 func ConfigFromEnv() (Config, error) {
-	c := Config{Address: os.Getenv("HTTP_ADDR"), Token: os.Getenv("PVMBG_TOKEN")}
+	c := Config{Address: os.Getenv("HTTP_ADDR"), DatabaseURL: os.Getenv("DATABASE_URL"), Token: os.Getenv("PVMBG_TOKEN")}
+	if c.DatabaseURL == "" {
+		return c, errors.New("DATABASE_URL is required")
+	}
 	if c.Address == "" {
 		c.Address = ":8082"
 	}

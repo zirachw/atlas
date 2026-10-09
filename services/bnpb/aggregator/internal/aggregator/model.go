@@ -19,6 +19,7 @@ type HazardEvent struct {
 	OccurredAt  time.Time                  `json:"occurred_at"`
 	IngestedAt  time.Time                  `json:"ingested_at"`
 	Attributes  map[string]json.RawMessage `json:"attributes"`
+	Revision    int64                      `json:"revision"`
 }
 
 type Freshness struct {

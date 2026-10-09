@@ -1,8 +1,10 @@
 package bmkg
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"maps"
@@ -11,6 +13,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -21,13 +24,60 @@ var authorized = map[string]string{"X-BMKG-Key": testKey}
 
 func testLog() *slog.Logger { return slog.New(slog.NewJSONHandler(io.Discard, nil)) }
 
-func testAPI(t *testing.T, delay time.Duration) *API {
+// memoryStore stands in for PostgresStore. SQL filtering and ordering are covered by the store integration test.
+type memoryStore struct {
+	mu       sync.Mutex
+	events   []SeismicEvent
+	warnings []TsunamiWarning
+	since    []*time.Time
+	err      error
+}
+
+func (m *memoryStore) Add(_ context.Context, e SeismicEvent, ws ...TsunamiWarning) error {
+	if err := validate(e, ws); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.events = append(m.events, e)
+	m.warnings = append(m.warnings, ws...)
+	return nil
+}
+
+func (m *memoryStore) Events(_ context.Context, since *time.Time) ([]SeismicEvent, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.since = append(m.since, since)
+	return slices.Clone(m.events), m.err
+}
+
+func (m *memoryStore) Warnings(_ context.Context, since *time.Time) ([]TsunamiWarning, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.since = append(m.since, since)
+	return slices.Clone(m.warnings), m.err
+}
+
+func (m *memoryStore) Health(context.Context) error { return m.err }
+
+func (m *memoryStore) count() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.events)
+}
+
+func seededStore(t *testing.T) *memoryStore {
 	t.Helper()
-	store, err := LoadSeed()
-	if err != nil {
+	m := &memoryStore{}
+	if err := LoadFixtures(context.Background(), m); err != nil {
 		t.Fatal(err)
 	}
-	return &API{Store: store, APIKey: testKey, Delay: delay, Log: testLog()}
+	return m
+}
+
+func testAPI(t *testing.T, delay time.Duration) *API {
+	t.Helper()
+	return &API{Store: seededStore(t), APIKey: testKey, Delay: delay, Log: testLog()}
 }
 
 func request(h http.Handler, method, path string, headers map[string]string) *httptest.ResponseRecorder {
@@ -126,59 +176,53 @@ func isTimestamp(v any) bool {
 	return err == nil
 }
 
-func TestSinceQuery(t *testing.T) {
+func TestSinceIsParsedAndPassedToStore(t *testing.T) {
 	a := testAPI(t, 0)
+	store := a.Store.(*memoryStore)
 	h := a.Handler()
-	all := a.Store.Events(nil)
-	pivot := all[5].OccurredAt
-	count := func(path string) int {
-		return len(decodeList(t, request(h, http.MethodGet, path, authorized)))
-	}
-	if n := count("/seismic-events"); n != len(all) {
-		t.Fatalf("without since: %d of %d", n, len(all))
-	}
-	inclusive := count("/seismic-events?since=" + pivot.Format(time.RFC3339))
-	if inclusive != len(all)-5 {
-		t.Fatalf("since at a record's time returned %d, want %d", inclusive, len(all)-5)
-	}
+	want := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
 	// "+" must be percent-encoded in a query, or it decodes to a space.
-	offset := url.QueryEscape(pivot.In(time.FixedZone("WIB", 7*3600)).Format(time.RFC3339))
-	if n := count("/seismic-events?since=" + offset); n != inclusive {
-		t.Fatalf("offset since returned %d, want %d", n, inclusive)
-	}
-	if n := count("/seismic-events?since=" + pivot.Add(time.Nanosecond).Format(time.RFC3339Nano)); n != inclusive-1 {
-		t.Fatalf("since one nanosecond later returned %d, want %d", n, inclusive-1)
-	}
-	if w := request(h, http.MethodGet, "/seismic-events?since=2999-01-01T00:00:00Z", authorized); strings.TrimSpace(w.Body.String()) != "[]" {
-		t.Fatalf("empty result body %s", w.Body.String())
-	}
-	if n := count("/tsunami-warnings?since=" + pivot.Format(time.RFC3339)); n == 0 || n >= len(a.Store.Warnings(nil)) {
-		t.Fatalf("warnings since pivot: %d", n)
-	}
-	for _, query := range []string{"since=", "since=yesterday", "since=2026-09-29", "since=2026-09-29T00:00:00", "since=2026-09-29T00:00:00+07:00", "since=2026-09-29T00:00:00Z&since=2026-09-30T00:00:00Z"} {
+	for _, query := range []string{"", "since=2026-09-29T12:00:00Z", "since=" + url.QueryEscape("2026-09-29T19:00:00+07:00"), "since=2026-09-29T12:00:00.000000000Z"} {
 		for _, path := range []string{"/seismic-events", "/tsunami-warnings"} {
-			if w := request(h, http.MethodGet, path+"?"+query, authorized); w.Code != http.StatusBadRequest {
+			store.since = nil
+			if w := request(h, http.MethodGet, path+"?"+query, authorized); w.Code != http.StatusOK {
 				t.Fatalf("%s?%s status %d", path, query, w.Code)
 			}
+			got := store.since[0]
+			if query == "" && got != nil || query != "" && (got == nil || !got.Equal(want)) {
+				t.Fatalf("%s?%s passed since %v", path, query, got)
+			}
+		}
+	}
+	for _, query := range []string{"since=", "since=yesterday", "since=2026-09-29", "since=2026-09-29T00:00:00", "since=2026-09-29T00:00:00+07:00", "since=2026-09-29T00:00:00Z&since=2026-09-30T00:00:00Z"} {
+		store.since = nil
+		if w := request(h, http.MethodGet, "/seismic-events?"+query, authorized); w.Code != http.StatusBadRequest || len(store.since) != 0 {
+			t.Fatalf("?%s status %d, store called %d times", query, w.Code, len(store.since))
 		}
 	}
 }
 
-func TestNewEventsAppearAfterCheckpoint(t *testing.T) {
+func TestStoreFailureIsUnavailableAndLogged(t *testing.T) {
+	var logs bytes.Buffer
 	a := testAPI(t, 0)
+	a.Log = slog.New(slog.NewJSONHandler(&logs, nil))
+	a.Store.(*memoryStore).err = errors.New("connection refused")
 	h := a.Handler()
-	seed := a.Store.Events(nil)
-	checkpoint := seed[len(seed)-1].OccurredAt
-	gen := NewGenerator(Seed, time.Now())
-	for range 3 {
-		event, warnings := gen.Next(time.Now())
-		if err := a.Store.Add(event, warnings...); err != nil {
-			t.Fatal(err)
+	for _, path := range []string{"/seismic-events", "/tsunami-warnings"} {
+		if w := request(h, http.MethodGet, path, map[string]string{"X-BMKG-Key": testKey, correlationHeader: "poll-db"}); w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "store_unavailable") {
+			t.Fatalf("%s with a failed store status %d body %s", path, w.Code, w.Body.String())
 		}
 	}
-	events := decodeList(t, request(h, http.MethodGet, "/seismic-events?since="+checkpoint.Format(time.RFC3339Nano), authorized))
-	if len(events) != 4 || events[0]["event_id"] != seed[len(seed)-1].EventID {
-		t.Fatalf("since the checkpoint returned %d events", len(events))
+	if w := request(h, http.MethodGet, "/health", nil); w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("health with a failed store status %d", w.Code)
+	}
+	for _, want := range []string{`"msg":"database_call"`, `"dependency":"bmkg_store"`, `"correlation_id":"poll-db"`, `"latency_ms":`, `"reason":"store_error"`} {
+		if !strings.Contains(logs.String(), want) {
+			t.Fatalf("database call log misses %s", want)
+		}
+	}
+	if strings.Contains(logs.String(), "connection refused") {
+		t.Fatal("database error details leaked into the log")
 	}
 }
 

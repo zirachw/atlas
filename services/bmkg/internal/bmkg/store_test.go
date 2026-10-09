@@ -1,7 +1,9 @@
 package bmkg
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"slices"
 	"sync"
 	"testing"
@@ -9,137 +11,128 @@ import (
 )
 
 func TestSeedMeetsContract(t *testing.T) {
-	store, err := LoadSeed()
+	events, warnings, err := seedRecords()
 	if err != nil {
 		t.Fatal(err)
 	}
-	events := store.Events(nil)
 	if len(events) < MinSeedRecords {
 		t.Fatalf("seed has %d events", len(events))
 	}
 	magnitudes := map[float64]bool{}
+	levels := map[string]bool{}
+	var several, unwarned, calm bool
 	for _, e := range events {
 		magnitudes[e.Magnitude] = true
+		if err := validate(e, warnings[e.EventID]); err != nil {
+			t.Fatalf("seed event %s: %v", e.EventID, err)
+		}
+		for _, w := range warnings[e.EventID] {
+			levels[w.ThreatLevel] = true
+		}
+		several = several || len(warnings[e.EventID]) > 1
+		unwarned = unwarned || e.PotentialTsunami && len(warnings[e.EventID]) == 0
+		calm = calm || !e.PotentialTsunami
 	}
 	for _, m := range []float64{4.9, 5.0, 6.49, 6.5} {
 		if !magnitudes[m] {
 			t.Fatalf("seed misses magnitude boundary %v", m)
 		}
 	}
-	perEvent := map[string][]string{}
-	for _, w := range store.Warnings(nil) {
-		perEvent[w.RelatedEventID] = append(perEvent[w.RelatedEventID], w.ThreatLevel)
-	}
-	var several, unwarned, calm bool
-	for _, e := range events {
-		several = several || len(perEvent[e.EventID]) > 1
-		unwarned = unwarned || e.PotentialTsunami && len(perEvent[e.EventID]) == 0
-		calm = calm || !e.PotentialTsunami
-	}
-	if !several || !unwarned || !calm {
-		t.Fatalf("seed needs several warnings on one event (%v), a potential tsunami without warning (%v), and events without potential tsunami (%v)", several, unwarned, calm)
-	}
-	levels := map[string]bool{}
-	for _, ls := range perEvent {
-		for _, l := range ls {
-			levels[l] = true
-		}
-	}
-	if len(levels) != len(threatLevels) {
-		t.Fatalf("seed covers threat levels %v", levels)
+	if !several || !unwarned || !calm || len(levels) != len(threatLevels) {
+		t.Fatalf("seed needs several warnings on one event (%v), a potential tsunami without warning (%v), calm events (%v), and every threat level %v", several, unwarned, calm, levels)
 	}
 }
 
-func TestStoreRejectsInvalidRecordsWithoutPartialWrites(t *testing.T) {
-	store := NewStore()
-	risky := SeismicEvent{EventID: "e1", PotentialTsunami: true}
-	if err := store.Add(risky, TsunamiWarning{WarningID: "w1", RelatedEventID: "e1", ThreatLevel: "Siaga"}); err != nil {
+func integrationStore(t *testing.T) *PostgresStore {
+	t.Helper()
+	url := os.Getenv("BMKG_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("set BMKG_TEST_DATABASE_URL or run make integration")
+	}
+	s, err := OpenStore(context.Background(), url)
+	if err != nil {
 		t.Fatal(err)
 	}
-	for _, tc := range []struct {
-		name     string
-		event    SeismicEvent
-		warnings []TsunamiWarning
-	}{
-		{"missing event ID", SeismicEvent{}, nil},
-		{"duplicate event ID", SeismicEvent{EventID: "e1"}, nil},
-		{"warning on calm event", SeismicEvent{EventID: "e2"}, []TsunamiWarning{{WarningID: "w2", RelatedEventID: "e2", ThreatLevel: "Awas"}}},
-		{"invalid threat level", SeismicEvent{EventID: "e3", PotentialTsunami: true}, []TsunamiWarning{{WarningID: "w3", RelatedEventID: "e3", ThreatLevel: "Bahaya"}}},
-		{"lowercase threat level", SeismicEvent{EventID: "e4", PotentialTsunami: true}, []TsunamiWarning{{WarningID: "w4", RelatedEventID: "e4", ThreatLevel: "awas"}}},
-		{"warning for another event", SeismicEvent{EventID: "e5", PotentialTsunami: true}, []TsunamiWarning{{WarningID: "w5", RelatedEventID: "e1", ThreatLevel: "Awas"}}},
-		{"stored warning ID", SeismicEvent{EventID: "e6", PotentialTsunami: true}, []TsunamiWarning{{WarningID: "w1", RelatedEventID: "e6", ThreatLevel: "Awas"}}},
-		{"repeated warning ID in one batch", SeismicEvent{EventID: "e7", PotentialTsunami: true}, []TsunamiWarning{{WarningID: "w7", RelatedEventID: "e7", ThreatLevel: "Awas"}, {WarningID: "w7", RelatedEventID: "e7", ThreatLevel: "Siaga"}}},
-		{"missing warning ID", SeismicEvent{EventID: "e8", PotentialTsunami: true}, []TsunamiWarning{{RelatedEventID: "e8", ThreatLevel: "Awas"}}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if err := store.Add(tc.event, tc.warnings...); err == nil {
-				t.Fatal("invalid record accepted")
-			}
-			if len(store.Events(nil)) != 1 || len(store.Warnings(nil)) != 1 {
-				t.Fatal("rejected add left a partial write")
-			}
-		})
+	t.Cleanup(s.Close)
+	if _, err := s.pool.Exec(context.Background(), "TRUNCATE tsunami_warnings, seismic_events"); err != nil {
+		t.Fatal(err)
 	}
-	if store.AddWarning(TsunamiWarning{WarningID: "w9", RelatedEventID: "missing", ThreatLevel: "Awas"}) == nil {
-		t.Fatal("warning for unknown event accepted")
-	}
+	return s
 }
 
-func TestSinceIsInclusiveAndOrdered(t *testing.T) {
-	store := NewStore()
-	base := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
-	// Added out of time order, with two events sharing a timestamp.
-	for i, offset := range []int{3, 1, 2, 2, 0} {
-		id := fmt.Sprintf("e%d", i)
-		if err := store.Add(SeismicEvent{EventID: id, OccurredAt: base.Add(time.Duration(offset) * time.Minute), PotentialTsunami: true}, TsunamiWarning{WarningID: "w" + id, RelatedEventID: id, ThreatLevel: "Waspada"}); err != nil {
+func TestIntegrationStorePersistsSeedAndFiltersSince(t *testing.T) {
+	s := integrationStore(t)
+	ctx := context.Background()
+	// Loading twice proves seeding on every start never duplicates records.
+	for range 2 {
+		if err := LoadFixtures(ctx, s); err != nil {
 			t.Fatal(err)
 		}
 	}
-	since := base.Add(2 * time.Minute)
-	ids := func(events []SeismicEvent) (out []string) {
-		for _, e := range events {
-			out = append(out, e.EventID)
+	seed, seedWarnings, _ := seedRecords()
+	all, err := s.Events(ctx, nil)
+	if err != nil || len(all) != len(seed) {
+		t.Fatalf("stored %d events after two seed loads, want %d: %v", len(all), len(seed), err)
+	}
+	if !slices.IsSortedFunc(all, func(a, b SeismicEvent) int { return a.OccurredAt.Compare(b.OccurredAt) }) {
+		t.Fatal("events are not ordered by occurred_at")
+	}
+	pivot := all[5].OccurredAt
+	since, _ := s.Events(ctx, &pivot)
+	if len(since) != len(all)-5 || since[0].EventID != all[5].EventID {
+		t.Fatalf("since at a stored time returned %d events starting at %s", len(since), since[0].EventID)
+	}
+	byEvent := map[string]time.Time{}
+	for _, e := range all {
+		byEvent[e.EventID] = e.OccurredAt
+	}
+	warnings, _ := s.Warnings(ctx, &pivot)
+	for _, w := range warnings {
+		if byEvent[w.RelatedEventID].Before(pivot) {
+			t.Fatalf("warning %s relates to an event before since", w.WarningID)
 		}
-		return out
 	}
-	if got := ids(store.Events(&since)); !slices.Equal(got, []string{"e2", "e3", "e0"}) {
-		t.Fatalf("events since %s: %v", since, got)
+	allWarnings, _ := s.Warnings(ctx, nil)
+	total := 0
+	for _, ws := range seedWarnings {
+		total += len(ws)
 	}
-	if got := ids(store.Events(nil)); !slices.Equal(got, []string{"e4", "e1", "e2", "e3", "e0"}) {
-		t.Fatalf("all events: %v", got)
+	if len(allWarnings) != total || len(warnings) == 0 || len(warnings) >= len(allWarnings) {
+		t.Fatalf("warnings stored %d of %d, since kept %d", len(allWarnings), total, len(warnings))
 	}
-	var warned []string
-	for _, w := range store.Warnings(&since) {
-		warned = append(warned, w.RelatedEventID)
-	}
-	if !slices.Equal(warned, []string{"e2", "e3", "e0"}) {
-		t.Fatalf("warnings since %s relate to %v", since, warned)
-	}
-	future := base.Add(time.Hour)
-	if store.Events(&future) == nil || len(store.Events(&future)) != 0 || store.Warnings(&future) == nil {
+	future := time.Now().Add(time.Hour)
+	if empty, err := s.Events(ctx, &future); err != nil || empty == nil || len(empty) != 0 {
 		t.Fatal("an empty result must be an empty slice, which encodes as []")
 	}
-}
 
-func TestStoreConcurrentAddAndRead(t *testing.T) {
-	store := NewStore()
+	// A warning the database rejects rolls back its event too.
+	broken := SeismicEvent{EventID: "atomic-1", Magnitude: 7, OccurredAt: time.Now(), PotentialTsunami: true}
+	if err := s.Add(ctx, broken, TsunamiWarning{WarningID: "atomic-w1", RelatedEventID: "atomic-1", ThreatLevel: "Awas"}); err == nil {
+		t.Fatal("a warning without affected_zones was stored")
+	}
+	if after, _ := s.Events(ctx, nil); len(after) != len(all) {
+		t.Fatal("a rejected warning left its event stored")
+	}
+
 	var wg sync.WaitGroup
-	for writer := range 4 {
+	for i := range 20 {
 		wg.Go(func() {
-			for i := range 50 {
-				id := fmt.Sprintf("e%d-%d", writer, i)
-				_ = store.Add(SeismicEvent{EventID: id, OccurredAt: time.Now(), PotentialTsunami: true}, TsunamiWarning{WarningID: "w" + id, RelatedEventID: id, ThreatLevel: "Siaga"})
-			}
-		})
-		wg.Go(func() {
-			for range 50 {
-				store.Events(nil)
-				store.Warnings(nil)
+			e := SeismicEvent{EventID: fmt.Sprintf("concurrent-%d", i), Magnitude: 4, RegionName: "Laut Banda", OccurredAt: time.Now()}
+			if err := s.Add(ctx, e); err != nil {
+				t.Error(err)
 			}
 		})
 	}
 	wg.Wait()
-	if len(store.Events(nil)) != 200 || len(store.Warnings(nil)) != 200 {
-		t.Fatalf("stored %d events and %d warnings", len(store.Events(nil)), len(store.Warnings(nil)))
+
+	// A reopened store is what a restarted mock sees.
+	s.Close()
+	reopened, err := OpenStore(ctx, os.Getenv("BMKG_TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if after, _ := reopened.Events(ctx, nil); len(after) != len(all)+20 {
+		t.Fatalf("restart kept %d events, want %d", len(after), len(all)+20)
 	}
 }

@@ -40,6 +40,8 @@ help:
 	@echo "make stop      Stop Compose and preserve volumes"
 	@echo "make logs      Follow Compose logs"
 	@echo "make integration  Test services with disposable PostgreSQL and RabbitMQ"
+	@echo "make demo  Check every spec criterion on Compose, P=P3 limits to one problem"
+	@echo "make demo-load  Also run the P2 sustained and overload k6 tests"
 
 setup:
 	$(call in_modules,go mod download)
@@ -92,3 +94,12 @@ logs:
 .PHONY: integration
 integration:
 	./scripts/test-aggregator-integration.sh
+
+DEMO_RUN = TestDemo$(if $(P),/$(P))
+
+.PHONY: demo demo-load
+demo:
+	cd demo && go test -tags demo -count=1 -timeout 30m -v -run '$(DEMO_RUN)' .
+
+demo-load:
+	DEMO_LOAD=1 $(MAKE) demo

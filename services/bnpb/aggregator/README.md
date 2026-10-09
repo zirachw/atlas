@@ -20,9 +20,14 @@ curl -H "Authorization: Bearer $AGGREGATOR_INTERNAL_TOKEN" \
 
 ## Checks
 
-From the repository root.
+Run from the repository root:
 
 ```sh
 make ci
 make integration
+make demo
 ```
+
+`make demo` covers ingestion, schema changes, outage recovery, fanout, and the independent rebuild on the full stack. Its results are in the root `evidence/` folder.
+
+Persistence and publication are separate. A crash after commit can leave a stored event unpublished; the integration test verifies this M1 limitation.

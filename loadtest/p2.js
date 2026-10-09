@@ -4,31 +4,39 @@ import { Counter, Rate } from 'k6/metrics';
 
 const baseURL = __ENV.BASE_URL || 'http://localhost:8080';
 const authURL = __ENV.AUTH_URL || 'http://localhost:8084';
-const duration = __ENV.DURATION || '90s';
+// sustained proves P2.1 and P2.2. burst exceeds Client API capacity to show controlled 429 rejections.
+const burst = __ENV.SCENARIO === 'burst';
+const duration = __ENV.DURATION || (burst ? '20s' : '90s');
 const thinkTime = Number(__ENV.THINK_TIME || 0);
 
 const unexpectedErrors = new Rate('unexpected_errors');
 const controlledRejections = new Counter('controlled_rejections');
 const authFailures = new Counter('auth_failures');
 
+const kinds = burst ? ['bmkg'] : ['bmkg', 'volcanic'];
+// Tagged submetrics only appear in the summary when a threshold names them.
+const thresholds = { unexpected_errors: ['rate<0.01'] };
+for (const kind of kinds) {
+  thresholds[`http_req_duration{kind:${kind}}`] = ['max>=0'];
+  thresholds[`http_reqs{kind:${kind}}`] = ['count>=0'];
+  thresholds[`unexpected_errors{kind:${kind}}`] = ['rate>=0'];
+  thresholds[`controlled_rejections{kind:${kind}}`] = ['count>=0'];
+}
+if (burst) {
+  thresholds.controlled_rejections = ['count>0'];
+} else {
+  thresholds['http_req_duration{kind:bmkg}'] = ['p(95)<300'];
+}
+
 export const options = {
-  scenarios: {
-    bmkg_only: { executor: 'constant-vus', exec: 'bmkgOnly', vus: Number(__ENV.BMKG_VUS || 40), duration },
-    volcanic: { executor: 'constant-vus', exec: 'volcanic', vus: Number(__ENV.VOLCANIC_VUS || 20), duration },
-  },
+  scenarios: burst
+    ? { burst: { executor: 'constant-vus', exec: 'bmkgOnly', vus: Number(__ENV.BURST_VUS || 400), duration } }
+    : {
+        bmkg_only: { executor: 'constant-vus', exec: 'bmkgOnly', vus: Number(__ENV.BMKG_VUS || 40), duration },
+        volcanic: { executor: 'constant-vus', exec: 'volcanic', vus: Number(__ENV.VOLCANIC_VUS || 20), duration },
+      },
   summaryTrendStats: ['avg', 'med', 'p(95)', 'p(99)', 'max'],
-  // Tagged submetrics only appear in the summary when a threshold names them.
-  thresholds: {
-    'http_req_duration{kind:bmkg}': ['p(95)<300'],
-    'http_req_duration{kind:volcanic}': ['max>=0'],
-    'http_reqs{kind:bmkg}': ['count>=0'],
-    'http_reqs{kind:volcanic}': ['count>=0'],
-    'unexpected_errors{kind:bmkg}': ['rate>=0'],
-    'unexpected_errors{kind:volcanic}': ['rate>=0'],
-    'controlled_rejections{kind:bmkg}': ['count>=0'],
-    'controlled_rejections{kind:volcanic}': ['count>=0'],
-    unexpected_errors: ['rate<0.01'],
-  },
+  thresholds,
 };
 
 const json = { 'Content-Type': 'application/json' };
@@ -96,19 +104,25 @@ function row(data, kind) {
 export function handleSummary(data) {
   const p95 = metric(data, 'http_req_duration{kind:bmkg}', 'p(95)');
   const errors = metric(data, 'unexpected_errors', 'rate');
+  const rejected = metric(data, 'controlled_rejections', 'count');
   const lines = [
-    `P2 load test, ${(data.state.testRunDurationMs / 1000).toFixed(0)}s, ${metric(data, 'vus_max', 'max')} VUs`,
+    `P2 ${burst ? 'overload burst' : 'sustained load'} test, ${(data.state.testRunDurationMs / 1000).toFixed(0)}s, ${metric(data, 'vus_max', 'max')} VUs`,
     '',
     'kind      requests   req/s    p50 ms   p95 ms   p99 ms   errors     429',
-    row(data, 'bmkg'),
-    row(data, 'volcanic'),
+    ...kinds.map((kind) => row(data, kind)),
     '',
-    `BMKG-only p95 ${p95.toFixed(1)} ms, target below 300 ms: ${p95 < 300 ? 'PASS' : 'FAIL'}`,
+    burst
+      ? `Controlled 429 rejections ${rejected}, target above 0: ${rejected > 0 ? 'PASS' : 'FAIL'}`
+      : `BMKG-only p95 ${p95.toFixed(1)} ms, target below 300 ms: ${p95 < 300 ? 'PASS' : 'FAIL'}`,
     `Unexpected errors ${(errors * 100).toFixed(2)}%, target below 1%: ${errors < 0.01 ? 'PASS' : 'FAIL'}`,
-    `Controlled 429 rejections ${metric(data, 'controlled_rejections', 'count')}, Auth failures ${metric(data, 'auth_failures', 'count')}`,
+    `Controlled 429 rejections ${rejected}, Auth failures ${metric(data, 'auth_failures', 'count')}`,
     '',
   ];
-  const out = { stdout: lines.join('\n') };
+  const text = lines.join('\n');
+  const out = { stdout: text };
+  if (__ENV.SUMMARY_TEXT) {
+    out[__ENV.SUMMARY_TEXT] = text;
+  }
   if (__ENV.SUMMARY_JSON) {
     out[__ENV.SUMMARY_JSON] = JSON.stringify(data, null, 2);
   }

@@ -32,27 +32,64 @@ services:
       retries: 20
     restart: unless-stopped
 
+  # Each agency owns its database on a network only that agency can reach.
+  bmkg-db:
+    image: postgres:18.3-alpine
+    environment:
+      POSTGRES_USER: bmkg
+      POSTGRES_DB: bmkg
+      POSTGRES_PASSWORD: ${BMKG_DB_PASSWORD:?set BMKG database password}
+    volumes: [bmkg-data:/var/lib/postgresql]
+    networks: [bmkg-store]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U bmkg -d bmkg']
+      interval: 3s
+      timeout: 2s
+      retries: 15
+    restart: unless-stopped
+
   bmkg:
     build: ./services/bmkg
     environment:
       HTTP_ADDR: :8081
+      DATABASE_URL: postgres://bmkg:${BMKG_DB_PASSWORD}@bmkg-db:5432/bmkg?sslmode=disable
       BMKG_API_KEY: ${BMKG_API_KEY:?set source key}
       RESPONSE_DELAY: ${BMKG_RESPONSE_DELAY:-100ms}
       EVENT_INTERVAL: ${SOURCE_EVENT_INTERVAL:-10s}
     ports: ['127.0.0.1:${BMKG_PORT:-8081}:8081']
-    networks: [sources]
+    networks: [sources, bmkg-store]
+    depends_on:
+      bmkg-db: {condition: service_healthy}
+    restart: unless-stopped
+
+  pvmbg-db:
+    image: postgres:18.3-alpine
+    environment:
+      POSTGRES_USER: pvmbg
+      POSTGRES_DB: pvmbg
+      POSTGRES_PASSWORD: ${PVMBG_DB_PASSWORD:?set PVMBG database password}
+    volumes: [pvmbg-data:/var/lib/postgresql]
+    networks: [pvmbg-store]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U pvmbg -d pvmbg']
+      interval: 3s
+      timeout: 2s
+      retries: 15
     restart: unless-stopped
 
   pvmbg:
     build: ./services/pvmbg
     environment:
       HTTP_ADDR: :8082
+      DATABASE_URL: postgres://pvmbg:${PVMBG_DB_PASSWORD}@pvmbg-db:5432/pvmbg?sslmode=disable
       PVMBG_TOKEN: ${PVMBG_TOKEN:?set source token}
       MIN_RESPONSE_DELAY: ${PVMBG_MIN_RESPONSE_DELAY:-500ms}
       MAX_RESPONSE_DELAY: ${PVMBG_MAX_RESPONSE_DELAY:-3s}
       EVENT_INTERVAL: ${SOURCE_EVENT_INTERVAL:-10s}
     ports: ['127.0.0.1:${PVMBG_PORT:-8082}:8082']
-    networks: [sources]
+    networks: [sources, pvmbg-store]
+    depends_on:
+      pvmbg-db: {condition: service_healthy}
     restart: unless-stopped
 
   aggregator:
@@ -187,9 +224,15 @@ networks:
     internal: true
   auth-store:
     internal: true
+  bmkg-store:
+    internal: true
+  pvmbg-store:
+    internal: true
 
 volumes:
   postgres-data:
+  bmkg-data:
+  pvmbg-data:
   rabbitmq-data:
   consumer-a-data:
   consumer-b-data:

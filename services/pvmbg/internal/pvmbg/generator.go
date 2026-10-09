@@ -11,7 +11,7 @@ import (
 
 const Seed = 4031 // IF4031
 
-// IDs embed the boot time so a restarted in-memory mock never reuses an ID the Aggregator stored.
+// IDs embed the boot time because seq restarts at 1, so a restarted mock never reuses a stored ID.
 type Generator struct {
 	rng  *rand.Rand
 	boot int64
@@ -49,7 +49,7 @@ func (g *Generator) Next(now time.Time, schemaVersion int) VolcanicReport {
 }
 
 // Keeps running during an outage so the Aggregator has reports to catch up on.
-func RunGenerator(ctx context.Context, store *Store, controls *Controls, gen *Generator, interval time.Duration, log *slog.Logger) {
+func RunGenerator(ctx context.Context, store Store, controls *Controls, gen *Generator, interval time.Duration, log *slog.Logger) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -58,11 +58,21 @@ func RunGenerator(ctx context.Context, store *Store, controls *Controls, gen *Ge
 			return
 		case now := <-ticker.C:
 			report := gen.Next(now, controls.SchemaVersion())
-			if err := store.Add(report); err != nil {
-				log.Error("report_generation_failed", "service", "pvmbg", "reason", err.Error())
+			id := newCorrelationID()
+			writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			start := time.Now()
+			err := store.Add(writeCtx, report)
+			cancel()
+			reason := ""
+			if err != nil {
+				reason = err.Error()
+			}
+			log.Info("database_call", "service", "pvmbg", "dependency", "pvmbg_store", "operation", "add_report", "correlation_id", id, "latency_ms", time.Since(start).Milliseconds(), "reason", reason)
+			if err != nil {
+				log.Error("report_generation_failed", "service", "pvmbg", "correlation_id", id, "report_id", report.ReportID, "reason", err.Error())
 				continue
 			}
-			log.Info("report_generated", "service", "pvmbg", "report_id", report.ReportID, "volcano_id", report.VolcanoID, "alert_level", report.AlertLevel, "confidence_level", report.ConfidenceLevel != nil)
+			log.Info("report_generated", "service", "pvmbg", "correlation_id", id, "report_id", report.ReportID, "volcano_id", report.VolcanoID, "alert_level", report.AlertLevel, "confidence_level", report.ConfidenceLevel != nil)
 		}
 	}
 }

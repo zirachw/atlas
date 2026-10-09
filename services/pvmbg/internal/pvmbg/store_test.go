@@ -1,7 +1,9 @@
 package pvmbg
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"slices"
 	"sync"
 	"testing"
@@ -9,16 +11,18 @@ import (
 )
 
 func TestSeedMeetsContract(t *testing.T) {
-	store, err := LoadSeed()
+	reports, err := seedRecords()
 	if err != nil {
 		t.Fatal(err)
 	}
-	reports := store.Reports(nil)
 	if len(reports) < MinSeedRecords {
 		t.Fatalf("seed has %d reports", len(reports))
 	}
 	levels, volcanoes := map[string]bool{}, map[string]bool{}
 	for _, r := range reports {
+		if err := validate(r); err != nil {
+			t.Fatalf("seed report %s: %v", r.ReportID, err)
+		}
 		if r.ConfidenceLevel != nil {
 			t.Fatalf("seed report %s has confidence_level before any schema change", r.ReportID)
 		}
@@ -29,86 +33,88 @@ func TestSeedMeetsContract(t *testing.T) {
 	}
 }
 
-func TestStoreRejectsInvalidReports(t *testing.T) {
-	store := NewStore()
-	valid := VolcanicReport{ReportID: "r1", VolcanoID: "merapi", AlertLevel: "Siaga"}
-	if err := store.Add(valid); err != nil {
+func integrationStore(t *testing.T) *PostgresStore {
+	t.Helper()
+	url := os.Getenv("PVMBG_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("set PVMBG_TEST_DATABASE_URL or run make integration")
+	}
+	s, err := OpenStore(context.Background(), url)
+	if err != nil {
 		t.Fatal(err)
 	}
-	high, low, edge := 1.01, -0.01, 1.0
-	for _, tc := range []struct {
-		name   string
-		report VolcanicReport
-	}{
-		{"missing ID", VolcanicReport{VolcanoID: "merapi", AlertLevel: "Normal"}},
-		{"duplicate ID", valid},
-		{"unknown volcano", VolcanicReport{ReportID: "r2", VolcanoID: "bromo", AlertLevel: "Normal"}},
-		{"invalid alert level", VolcanicReport{ReportID: "r3", VolcanoID: "merapi", AlertLevel: "Bahaya"}},
-		{"uppercase alert level", VolcanicReport{ReportID: "r4", VolcanoID: "merapi", AlertLevel: "AWAS"}},
-		{"negative eruptions", VolcanicReport{ReportID: "r5", VolcanoID: "merapi", AlertLevel: "Siaga", EruptionCount24h: -1}},
-		{"negative ash height", VolcanicReport{ReportID: "r6", VolcanoID: "merapi", AlertLevel: "Siaga", AshColumnHeightM: -1}},
-		{"confidence above 1", VolcanicReport{ReportID: "r7", VolcanoID: "merapi", AlertLevel: "Siaga", ConfidenceLevel: &high}},
-		{"confidence below 0", VolcanicReport{ReportID: "r8", VolcanoID: "merapi", AlertLevel: "Siaga", ConfidenceLevel: &low}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if err := store.Add(tc.report); err == nil {
-				t.Fatal("invalid report accepted")
-			}
-		})
+	t.Cleanup(s.Close)
+	if _, err := s.pool.Exec(context.Background(), "TRUNCATE volcanic_reports; UPDATE schema_state SET version=1"); err != nil {
+		t.Fatal(err)
 	}
-	if err := store.Add(VolcanicReport{ReportID: "r9", VolcanoID: "semeru", AlertLevel: "Awas", ConfidenceLevel: &edge}); err != nil {
-		t.Fatal("confidence_level of exactly 1 rejected:", err)
-	}
-	if len(store.Reports(nil)) != 2 {
-		t.Fatalf("store holds %d reports", len(store.Reports(nil)))
-	}
+	return s
 }
 
-func TestSinceIsInclusiveAndOrdered(t *testing.T) {
-	store := NewStore()
-	base := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
-	// Added out of time order, with two reports sharing a timestamp.
-	for i, offset := range []int{3, 1, 2, 2, 0} {
-		if err := store.Add(VolcanicReport{ReportID: fmt.Sprintf("r%d", i), VolcanoID: "merapi", AlertLevel: "Normal", ReportedAt: base.Add(time.Duration(offset) * time.Minute)}); err != nil {
+func TestIntegrationStorePersistsReportsAndSchemaVersion(t *testing.T) {
+	s := integrationStore(t)
+	ctx := context.Background()
+	// Loading twice proves seeding on every start never duplicates records.
+	for range 2 {
+		if err := LoadFixtures(ctx, s); err != nil {
 			t.Fatal(err)
 		}
 	}
-	ids := func(reports []VolcanicReport) (out []string) {
-		for _, r := range reports {
-			out = append(out, r.ReportID)
-		}
-		return out
+	seed, _ := seedRecords()
+	all, err := s.Reports(ctx, nil)
+	if err != nil || len(all) != len(seed) {
+		t.Fatalf("stored %d reports after two seed loads, want %d: %v", len(all), len(seed), err)
 	}
-	since := base.Add(2 * time.Minute)
-	if got := ids(store.Reports(&since)); !slices.Equal(got, []string{"r2", "r3", "r0"}) {
-		t.Fatalf("reports since %s: %v", since, got)
+	if !slices.IsSortedFunc(all, func(a, b VolcanicReport) int { return a.ReportedAt.Compare(b.ReportedAt) }) {
+		t.Fatal("reports are not ordered by reported_at")
 	}
-	if got := ids(store.Reports(nil)); !slices.Equal(got, []string{"r4", "r1", "r2", "r3", "r0"}) {
-		t.Fatalf("all reports: %v", got)
+	pivot := all[7].ReportedAt
+	since, _ := s.Reports(ctx, &pivot)
+	if len(since) != len(all)-7 || since[0].ReportID != all[7].ReportID {
+		t.Fatalf("since at a stored time returned %d reports starting at %s", len(since), since[0].ReportID)
 	}
-	future := base.Add(time.Hour)
-	if got := store.Reports(&future); got == nil || len(got) != 0 {
+	future := time.Now().Add(time.Hour)
+	if empty, err := s.Reports(ctx, &future); err != nil || empty == nil || len(empty) != 0 {
 		t.Fatal("an empty result must be an empty slice, which encodes as []")
 	}
-}
 
-func TestStoreConcurrentAddAndRead(t *testing.T) {
-	store := NewStore()
+	if err := s.SetSchemaVersion(ctx, 2); err != nil {
+		t.Fatal(err)
+	}
+	confidence := 0.75
+	v2 := VolcanicReport{ReportID: "v2-1", VolcanoID: "merapi", AlertLevel: "Siaga", EruptionCount24h: 3, AshColumnHeightM: 800, ReportedAt: time.Now().UTC().Truncate(time.Millisecond), ConfidenceLevel: &confidence}
+	if err := s.Add(ctx, v2); err != nil {
+		t.Fatal(err)
+	}
 	var wg sync.WaitGroup
-	for writer := range 4 {
+	for i := range 20 {
 		wg.Go(func() {
-			for i := range 50 {
-				_ = store.Add(VolcanicReport{ReportID: fmt.Sprintf("r%d-%d", writer, i), VolcanoID: "krakatau", AlertLevel: "Waspada", ReportedAt: time.Now()})
-			}
-		})
-		wg.Go(func() {
-			for range 50 {
-				store.Reports(nil)
+			r := VolcanicReport{ReportID: fmt.Sprintf("concurrent-%d", i), VolcanoID: "semeru", AlertLevel: "Normal", ReportedAt: time.Now()}
+			if err := s.Add(ctx, r); err != nil {
+				t.Error(err)
 			}
 		})
 	}
 	wg.Wait()
-	if n := len(store.Reports(nil)); n != 200 {
-		t.Fatalf("stored %d reports", n)
+
+	// A reopened store is what a restarted mock sees.
+	s.Close()
+	reopened, err := OpenStore(ctx, os.Getenv("PVMBG_TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if v, err := reopened.SchemaVersion(ctx); err != nil || v != 2 {
+		t.Fatalf("restart lost the schema version, got %d: %v", v, err)
+	}
+	after, _ := reopened.Reports(ctx, nil)
+	if len(after) != len(all)+21 {
+		t.Fatalf("restart kept %d reports, want %d", len(after), len(all)+21)
+	}
+	shapes := map[bool]int{}
+	for _, r := range after {
+		shapes[r.ConfidenceLevel != nil]++
+	}
+	if shapes[true] != 1 || shapes[false] != len(all)+20 {
+		t.Fatalf("stored shapes %v, want old and new reports side by side", shapes)
 	}
 }

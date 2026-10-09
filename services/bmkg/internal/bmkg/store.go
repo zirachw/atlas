@@ -1,159 +1,151 @@
 package bmkg
 
 import (
-	"cmp"
+	"context"
 	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
-	"sync"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+//go:embed schema.sql
+var schema string
 
 //go:embed fixtures/*.json
 var fixtures embed.FS
 
 const MinSeedRecords = 20
 
-type Store struct {
-	mu       sync.RWMutex
-	events   []SeismicEvent
-	byID     map[string]SeismicEvent
-	warnings []TsunamiWarning
-	warnIDs  map[string]bool
+type Store interface {
+	Add(ctx context.Context, event SeismicEvent, warnings ...TsunamiWarning) error
+	Events(ctx context.Context, since *time.Time) ([]SeismicEvent, error)
+	Warnings(ctx context.Context, since *time.Time) ([]TsunamiWarning, error)
+	Health(ctx context.Context) error
 }
 
-func NewStore() *Store {
-	return &Store{byID: map[string]SeismicEvent{}, warnIDs: map[string]bool{}}
+type PostgresStore struct{ pool *pgxpool.Pool }
+
+func OpenStore(ctx context.Context, databaseURL string) (*PostgresStore, error) {
+	cfg, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, errors.New("invalid BMKG database URL")
+	}
+	cfg.MaxConns = 8
+	cfg.ConnConfig.ConnectTimeout = 2 * time.Second
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, errors.New("BMKG database connection failed")
+	}
+	if err = pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, errors.New("BMKG database unavailable")
+	}
+	if _, err = pool.Exec(ctx, schema); err != nil {
+		pool.Close()
+		return nil, errors.New("BMKG schema setup failed")
+	}
+	return &PostgresStore{pool: pool}, nil
 }
 
-func LoadSeed() (*Store, error) {
-	var events []SeismicEvent
-	var warnings []TsunamiWarning
-	if err := readFixture("fixtures/seismic-events.json", &events); err != nil {
-		return nil, err
-	}
-	if err := readFixture("fixtures/tsunami-warnings.json", &warnings); err != nil {
-		return nil, err
-	}
-	if len(events) < MinSeedRecords {
-		return nil, fmt.Errorf("seed has %d seismic events, need at least %d", len(events), MinSeedRecords)
-	}
-	s := NewStore()
-	for _, e := range events {
-		if err := s.Add(e); err != nil {
-			return nil, err
-		}
-	}
-	for _, w := range warnings {
-		if err := s.AddWarning(w); err != nil {
-			return nil, err
-		}
-	}
-	return s, nil
-}
+func (s *PostgresStore) Close()                           { s.pool.Close() }
+func (s *PostgresStore) Health(ctx context.Context) error { return s.pool.Ping(ctx) }
 
-func readFixture(name string, dst any) error {
-	raw, err := fixtures.ReadFile(name)
+// Add ignores records whose IDs are already stored, so seeding on every start is idempotent.
+func (s *PostgresStore) Add(ctx context.Context, event SeismicEvent, warnings ...TsunamiWarning) error {
+	if err := validate(event, warnings); err != nil {
+		return err
+	}
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if err := json.Unmarshal(raw, dst); err != nil {
-		return fmt.Errorf("%s: %w", name, err)
-	}
-	return nil
-}
-
-// Add stores nothing when the event or any of its warnings is invalid.
-func (s *Store) Add(event SeismicEvent, warnings ...TsunamiWarning) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if event.EventID == "" {
-		return errors.New("event_id is required")
-	}
-	if _, exists := s.byID[event.EventID]; exists {
-		return fmt.Errorf("duplicate event_id %s", event.EventID)
-	}
-	batch := map[string]bool{}
-	for _, w := range warnings {
-		if err := s.checkWarning(w, event); err != nil {
-			return err
-		}
-		if batch[w.WarningID] {
-			return fmt.Errorf("duplicate warning_id %s", w.WarningID)
-		}
-		batch[w.WarningID] = true
-	}
-	s.events = append(s.events, event)
-	s.byID[event.EventID] = event
-	for _, w := range warnings {
-		s.warnings = append(s.warnings, w)
-		s.warnIDs[w.WarningID] = true
-	}
-	return nil
-}
-
-func (s *Store) AddWarning(w TsunamiWarning) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	event, ok := s.byID[w.RelatedEventID]
-	if !ok {
-		return fmt.Errorf("warning %s references unknown event %s", w.WarningID, w.RelatedEventID)
-	}
-	if err := s.checkWarning(w, event); err != nil {
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, `INSERT INTO seismic_events (event_id,magnitude,depth_km,epicenter_lat,epicenter_lon,region_name,occurred_at,potential_tsunami) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (event_id) DO NOTHING`,
+		event.EventID, event.Magnitude, event.DepthKM, event.EpicenterLat, event.EpicenterLon, event.RegionName, event.OccurredAt, event.PotentialTsunami); err != nil {
 		return err
 	}
-	s.warnings = append(s.warnings, w)
-	s.warnIDs[w.WarningID] = true
-	return nil
-}
-
-func (s *Store) checkWarning(w TsunamiWarning, event SeismicEvent) error {
-	switch {
-	case w.WarningID == "":
-		return errors.New("warning_id is required")
-	case s.warnIDs[w.WarningID]:
-		return fmt.Errorf("duplicate warning_id %s", w.WarningID)
-	case w.RelatedEventID != event.EventID:
-		return fmt.Errorf("warning %s does not relate to event %s", w.WarningID, event.EventID)
-	case !event.PotentialTsunami:
-		return fmt.Errorf("warning %s relates to event %s without potential_tsunami", w.WarningID, event.EventID)
-	case !threatLevels[w.ThreatLevel]:
-		return fmt.Errorf("warning %s has invalid threat_level %q", w.WarningID, w.ThreatLevel)
+	for _, w := range warnings {
+		if _, err = tx.Exec(ctx, `INSERT INTO tsunami_warnings (warning_id,related_event_id,threat_level,affected_zones,estimated_arrival) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (warning_id) DO NOTHING`,
+			w.WarningID, w.RelatedEventID, w.ThreatLevel, w.AffectedZones, w.EstimatedArrival); err != nil {
+			return err
+		}
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 // Events includes an event whose occurred_at equals since.
-func (s *Store) Events(since *time.Time) []SeismicEvent {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := []SeismicEvent{}
-	for _, e := range s.events {
-		if since == nil || !e.OccurredAt.Before(*since) {
-			out = append(out, e)
-		}
+func (s *PostgresStore) Events(ctx context.Context, since *time.Time) ([]SeismicEvent, error) {
+	rows, err := s.pool.Query(ctx, `SELECT event_id,magnitude,depth_km,epicenter_lat,epicenter_lon,region_name,occurred_at,potential_tsunami FROM seismic_events WHERE $1::timestamptz IS NULL OR occurred_at >= $1 ORDER BY occurred_at, event_id`, since)
+	if err != nil {
+		return nil, err
 	}
-	slices.SortFunc(out, func(a, b SeismicEvent) int {
-		return cmp.Or(a.OccurredAt.Compare(b.OccurredAt), cmp.Compare(a.EventID, b.EventID))
-	})
-	return out
+	defer rows.Close()
+	out := []SeismicEvent{}
+	for rows.Next() {
+		var e SeismicEvent
+		if err := rows.Scan(&e.EventID, &e.Magnitude, &e.DepthKM, &e.EpicenterLat, &e.EpicenterLon, &e.RegionName, &e.OccurredAt, &e.PotentialTsunami); err != nil {
+			return nil, err
+		}
+		e.OccurredAt = e.OccurredAt.UTC()
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }
 
 // Warnings have no timestamp, so since applies to the related event's occurred_at.
-func (s *Store) Warnings(since *time.Time) []TsunamiWarning {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	eventTime := func(w TsunamiWarning) time.Time { return s.byID[w.RelatedEventID].OccurredAt }
+func (s *PostgresStore) Warnings(ctx context.Context, since *time.Time) ([]TsunamiWarning, error) {
+	rows, err := s.pool.Query(ctx, `SELECT w.warning_id,w.related_event_id,w.threat_level,w.affected_zones,w.estimated_arrival FROM tsunami_warnings w JOIN seismic_events e ON e.event_id = w.related_event_id WHERE $1::timestamptz IS NULL OR e.occurred_at >= $1 ORDER BY e.occurred_at, w.warning_id`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 	out := []TsunamiWarning{}
-	for _, w := range s.warnings {
-		if since == nil || !eventTime(w).Before(*since) {
-			out = append(out, w)
+	for rows.Next() {
+		var w TsunamiWarning
+		if err := rows.Scan(&w.WarningID, &w.RelatedEventID, &w.ThreatLevel, &w.AffectedZones, &w.EstimatedArrival); err != nil {
+			return nil, err
+		}
+		w.EstimatedArrival = w.EstimatedArrival.UTC()
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
+func seedRecords() ([]SeismicEvent, map[string][]TsunamiWarning, error) {
+	var events []SeismicEvent
+	var warnings []TsunamiWarning
+	for name, dst := range map[string]any{"fixtures/seismic-events.json": &events, "fixtures/tsunami-warnings.json": &warnings} {
+		raw, err := fixtures.ReadFile(name)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := json.Unmarshal(raw, dst); err != nil {
+			return nil, nil, fmt.Errorf("%s: %w", name, err)
 		}
 	}
-	slices.SortFunc(out, func(a, b TsunamiWarning) int {
-		return cmp.Or(eventTime(a).Compare(eventTime(b)), cmp.Compare(a.WarningID, b.WarningID))
-	})
-	return out
+	if len(events) < MinSeedRecords {
+		return nil, nil, fmt.Errorf("seed has %d seismic events, need at least %d", len(events), MinSeedRecords)
+	}
+	byEvent := map[string][]TsunamiWarning{}
+	for _, w := range warnings {
+		byEvent[w.RelatedEventID] = append(byEvent[w.RelatedEventID], w)
+	}
+	return events, byEvent, nil
+}
+
+// LoadFixtures stores the embedded seed records, so every start serves at least MinSeedRecords historical events.
+func LoadFixtures(ctx context.Context, store Store) error {
+	events, warnings, err := seedRecords()
+	if err != nil {
+		return err
+	}
+	for _, e := range events {
+		if err := store.Add(ctx, e, warnings[e.EventID]...); err != nil {
+			return fmt.Errorf("seed %s: %w", e.EventID, err)
+		}
+	}
+	return nil
 }
