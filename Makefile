@@ -40,9 +40,8 @@ help:
 	@echo "make stop      Stop Compose and preserve volumes"
 	@echo "make logs      Follow Compose logs"
 	@echo "make integration  Test services with disposable PostgreSQL and RabbitMQ"
-	@echo "make e2e         Verify a disposable full Compose stack"
-	@echo "make e2e-p2      Include a 90-second k6 load test and TCP connection samples"
-	@echo "make evidence-images  Run tests and capture their output"
+	@echo "make demo  Check every spec criterion on Compose, P=P3 limits to one problem"
+	@echo "make demo-load  Also run the P2 sustained and overload k6 tests"
 
 setup:
 	$(call in_modules,go mod download)
@@ -96,14 +95,11 @@ logs:
 integration:
 	./scripts/test-aggregator-integration.sh
 
-.PHONY: e2e e2e-p2
-e2e:
-	python3 scripts/verify-aggregator-stack.py
+DEMO_RUN = TestDemo$(if $(P),/$(P))
 
-e2e-p2:
-	python3 scripts/verify-aggregator-stack.py --p2
+.PHONY: demo demo-load
+demo:
+	cd demo && go test -tags demo -count=1 -timeout 30m -v -run '$(DEMO_RUN)' .
 
-FREEZE ?= freeze
-.PHONY: evidence-images
-evidence-images:
-	python3 scripts/render-test-evidence.py --freeze "$(FREEZE)"
+demo-load:
+	DEMO_LOAD=1 $(MAKE) demo
