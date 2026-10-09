@@ -18,19 +18,25 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	store, err := bmkg.LoadSeed()
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	startup, stop := context.WithTimeout(ctx, 15*time.Second)
+	store, err := bmkg.OpenStore(startup, cfg.DatabaseURL)
+	if err == nil {
+		err = bmkg.LoadFixtures(startup, store)
+	}
+	stop()
 	if err != nil {
 		return err
 	}
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
+	defer store.Close()
 	go bmkg.RunGenerator(ctx, store, bmkg.NewGenerator(bmkg.Seed, time.Now()), cfg.EventInterval, log)
 
 	api := &bmkg.API{Store: store, APIKey: cfg.APIKey, Delay: cfg.Delay, Log: log}
 	server := &http.Server{Addr: cfg.Address, Handler: api.Handler(), ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
 	done := make(chan error, 1)
 	go func() { done <- server.ListenAndServe() }()
-	log.Info("started", "service", "bmkg", "address", cfg.Address, "delay_ms", cfg.Delay.Milliseconds(), "event_interval", cfg.EventInterval.String(), "seed_events", len(store.Events(nil)))
+	log.Info("started", "service", "bmkg", "address", cfg.Address, "delay_ms", cfg.Delay.Milliseconds(), "event_interval", cfg.EventInterval.String())
 	select {
 	case <-ctx.Done():
 	case err = <-done:

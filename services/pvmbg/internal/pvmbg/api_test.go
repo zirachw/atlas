@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"maps"
@@ -12,6 +13,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -22,13 +24,63 @@ var v1Fields = []string{"alert_level", "ash_column_height_m", "eruption_count_24
 
 func testLog() *slog.Logger { return slog.New(slog.NewJSONHandler(io.Discard, nil)) }
 
+// memoryStore stands in for PostgresStore. SQL filtering and ordering are covered by the store integration test.
+type memoryStore struct {
+	mu      sync.Mutex
+	reports []VolcanicReport
+	version int
+	since   []*time.Time
+	err     error
+}
+
+func (m *memoryStore) Add(_ context.Context, r VolcanicReport) error {
+	if err := validate(r); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.reports = append(m.reports, r)
+	return nil
+}
+
+func (m *memoryStore) Reports(_ context.Context, since *time.Time) ([]VolcanicReport, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.since = append(m.since, since)
+	return slices.Clone(m.reports), m.err
+}
+
+func (m *memoryStore) SchemaVersion(context.Context) (int, error) { return m.version, m.err }
+
+func (m *memoryStore) SetSchemaVersion(_ context.Context, v int) error {
+	if m.err != nil {
+		return m.err
+	}
+	m.version = v
+	return nil
+}
+
+func (m *memoryStore) Health(context.Context) error { return m.err }
+
+func (m *memoryStore) snapshot() []VolcanicReport {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return slices.Clone(m.reports)
+}
+
+func (m *memoryStore) count() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.reports)
+}
+
 func testAPI(t *testing.T, delay time.Duration) *API {
 	t.Helper()
-	store, err := LoadSeed()
-	if err != nil {
+	store := &memoryStore{version: 1}
+	if err := LoadFixtures(context.Background(), store); err != nil {
 		t.Fatal(err)
 	}
-	return &API{Store: store, Controls: NewControls(), Token: testToken, Delay: func() time.Duration { return delay }, MaxHang: 5 * time.Second, Log: testLog()}
+	return &API{Store: store, Controls: NewControls(1), Token: testToken, Delay: func() time.Duration { return delay }, MaxHang: 5 * time.Second, Log: testLog()}
 }
 
 func request(h http.Handler, method, path, body string, headers map[string]string) *httptest.ResponseRecorder {
@@ -54,7 +106,7 @@ func decodeReports(t *testing.T, h http.Handler, path string) []map[string]json.
 func generate(t *testing.T, a *API, gen *Generator) VolcanicReport {
 	t.Helper()
 	r := gen.Next(time.Now(), a.Controls.SchemaVersion())
-	if err := a.Store.Add(r); err != nil {
+	if err := a.Store.Add(context.Background(), r); err != nil {
 		t.Fatal(err)
 	}
 	return r
@@ -110,33 +162,52 @@ func TestResponsesMatchSpecFieldsAndTypes(t *testing.T) {
 	}
 }
 
-func TestSinceQuery(t *testing.T) {
+func TestSinceIsParsedAndPassedToStore(t *testing.T) {
 	a := testAPI(t, 0)
+	store := a.Store.(*memoryStore)
 	h := a.Handler()
-	all := a.Store.Reports(nil)
-	pivot := all[7].ReportedAt
-	count := func(path string) int { return len(decodeReports(t, h, path)) }
-	if n := count("/volcanic-reports"); n != len(all) {
-		t.Fatalf("without since: %d of %d", n, len(all))
-	}
-	inclusive := count("/volcanic-reports?since=" + pivot.Format(time.RFC3339))
-	if inclusive != len(all)-7 {
-		t.Fatalf("since at a report's time returned %d, want %d", inclusive, len(all)-7)
-	}
-	offset := url.QueryEscape(pivot.In(time.FixedZone("WIB", 7*3600)).Format(time.RFC3339))
-	if n := count("/volcanic-reports?since=" + offset); n != inclusive {
-		t.Fatalf("offset since returned %d, want %d", n, inclusive)
-	}
-	if n := count("/volcanic-reports?since=" + pivot.Add(time.Nanosecond).Format(time.RFC3339Nano)); n != inclusive-1 {
-		t.Fatalf("since one nanosecond later returned %d, want %d", n, inclusive-1)
-	}
-	if w := request(h, http.MethodGet, "/volcanic-reports?since=2999-01-01T00:00:00Z", "", authorized); strings.TrimSpace(w.Body.String()) != "[]" {
-		t.Fatalf("empty result body %s", w.Body.String())
-	}
-	for _, query := range []string{"since=", "since=yesterday", "since=2026-09-29", "since=2026-09-29T00:00:00", "since=2026-09-29T00:00:00+07:00", "since=2026-09-29T00:00:00Z&since=2026-09-30T00:00:00Z"} {
-		if w := request(h, http.MethodGet, "/volcanic-reports?"+query, "", authorized); w.Code != http.StatusBadRequest {
+	want := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	// "+" must be percent-encoded in a query, or it decodes to a space.
+	for _, query := range []string{"", "since=2026-09-29T12:00:00Z", "since=" + url.QueryEscape("2026-09-29T19:00:00+07:00"), "since=2026-09-29T12:00:00.000000000Z"} {
+		store.since = nil
+		if w := request(h, http.MethodGet, "/volcanic-reports?"+query, "", authorized); w.Code != http.StatusOK {
 			t.Fatalf("?%s status %d", query, w.Code)
 		}
+		got := store.since[0]
+		if query == "" && got != nil || query != "" && (got == nil || !got.Equal(want)) {
+			t.Fatalf("?%s passed since %v", query, got)
+		}
+	}
+	for _, query := range []string{"since=", "since=yesterday", "since=2026-09-29", "since=2026-09-29T00:00:00", "since=2026-09-29T00:00:00+07:00", "since=2026-09-29T00:00:00Z&since=2026-09-30T00:00:00Z"} {
+		store.since = nil
+		if w := request(h, http.MethodGet, "/volcanic-reports?"+query, "", authorized); w.Code != http.StatusBadRequest || len(store.since) != 0 {
+			t.Fatalf("?%s status %d, store called %d times", query, w.Code, len(store.since))
+		}
+	}
+}
+
+func TestStoreFailureIsUnavailableAndLogged(t *testing.T) {
+	var logs bytes.Buffer
+	a := testAPI(t, 0)
+	a.Log = slog.New(slog.NewJSONHandler(&logs, nil))
+	a.Store.(*memoryStore).err = errors.New("connection refused")
+	h := a.Handler()
+	if w := request(h, http.MethodGet, "/volcanic-reports", "", map[string]string{"Authorization": "Bearer " + testToken, correlationHeader: "poll-db"}); w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "store_unavailable") {
+		t.Fatalf("read with a failed store status %d body %s", w.Code, w.Body.String())
+	}
+	if w := request(h, http.MethodPost, "/admin/schema-version", `{"version":2}`, nil); w.Code != http.StatusServiceUnavailable || a.Controls.SchemaVersion() != 1 {
+		t.Fatalf("schema switch with a failed store status %d, version %d", w.Code, a.Controls.SchemaVersion())
+	}
+	if w := request(h, http.MethodGet, "/health", "", nil); w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("health with a failed store status %d", w.Code)
+	}
+	for _, want := range []string{`"msg":"database_call"`, `"dependency":"pvmbg_store"`, `"correlation_id":"poll-db"`, `"latency_ms":`, `"reason":"store_error"`} {
+		if !strings.Contains(logs.String(), want) {
+			t.Fatalf("database call log misses %s", want)
+		}
+	}
+	if strings.Contains(logs.String(), "connection refused") {
+		t.Fatal("database error details leaked into the log")
 	}
 }
 
@@ -151,6 +222,9 @@ func TestSchemaChangeAtRuntime(t *testing.T) {
 	}
 	if !strings.Contains(request(h, http.MethodGet, "/health", "", nil).Body.String(), `"schema_version":2`) {
 		t.Fatal("health does not show the schema version")
+	}
+	if v, _ := a.Store.SchemaVersion(context.Background()); v != 2 {
+		t.Fatalf("stored schema version %d, so a restart would lose the switch", v)
 	}
 	after := generate(t, a, gen)
 	// The inclusive since refetches the pre-switch report, so it must keep its original shape.
@@ -214,8 +288,11 @@ func TestOutageErrorModeAndRecovery(t *testing.T) {
 		t.Fatalf("disable outage: %d %s", w.Code, w.Body.String())
 	}
 	a.Delay = func() time.Duration { return 0 }
-	reports := decodeReports(t, h, "/volcanic-reports?since="+generated.ReportedAt.Format(time.RFC3339Nano))
-	if len(reports) != 1 {
+	served := false
+	for _, r := range decodeReports(t, h, "/volcanic-reports") {
+		served = served || string(r["report_id"]) == `"`+generated.ReportID+`"`
+	}
+	if !served {
 		t.Fatal("a report generated during the outage is missing after recovery")
 	}
 	if w := request(h, http.MethodGet, "/health", "", nil); w.Code != http.StatusOK {

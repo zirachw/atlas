@@ -23,7 +23,7 @@ const correlationHeader = "X-Correlation-ID"
 const DefaultMaxHang = time.Minute
 
 type API struct {
-	Store    *Store
+	Store    Store
 	Controls *Controls
 	Token    string
 	Delay    func() time.Duration
@@ -38,9 +38,18 @@ func (a *API) Handler() http.Handler {
 	r.Post("/admin/schema-version", a.setSchemaVersion)
 	r.Post("/admin/outage", a.setOutage)
 	r.With(a.outage, a.authenticate, a.delay).Get("/volcanic-reports", func(w http.ResponseWriter, r *http.Request) {
-		if since, ok := parseSince(w, r); ok {
-			writeJSON(w, http.StatusOK, a.Store.Reports(since))
+		since, ok := parseSince(w, r)
+		if !ok {
+			return
 		}
+		start := time.Now()
+		reports, err := a.Store.Reports(r.Context(), since)
+		a.logDB(r, "read_volcanic_reports", start, err)
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, "store_unavailable")
+			return
+		}
+		writeJSON(w, http.StatusOK, reports)
 	})
 	return r
 }
@@ -48,6 +57,12 @@ func (a *API) Handler() http.Handler {
 func (a *API) health(w http.ResponseWriter, r *http.Request) {
 	if o := a.Controls.Outage(); o.Enabled {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "outage", "outage": o})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), time.Second)
+	defer cancel()
+	if err := a.Store.Health(ctx); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "store_unavailable")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "schema_version": a.Controls.SchemaVersion()})
@@ -62,6 +77,13 @@ func (a *API) setSchemaVersion(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Version == nil || *in.Version != 1 && *in.Version != 2 {
 		writeError(w, http.StatusBadRequest, "version_must_be_1_or_2")
+		return
+	}
+	start := time.Now()
+	err := a.Store.SetSchemaVersion(r.Context(), *in.Version)
+	a.logDB(r, "set_schema_version", start, err)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "store_unavailable")
 		return
 	}
 	a.Controls.SetSchemaVersion(*in.Version)
@@ -92,6 +114,14 @@ func (a *API) setOutage(w http.ResponseWriter, r *http.Request) {
 	a.Controls.SetOutage(o)
 	a.Log.Info("outage_changed", "service", "pvmbg", "correlation_id", r.Header.Get(correlationHeader), "enabled", o.Enabled, "mode", o.Mode)
 	writeJSON(w, http.StatusOK, o)
+}
+
+func (a *API) logDB(r *http.Request, operation string, start time.Time, err error) {
+	reason := ""
+	if err != nil {
+		reason = "store_error"
+	}
+	a.Log.Info("database_call", "service", "pvmbg", "dependency", "pvmbg_store", "operation", operation, "correlation_id", r.Header.Get(correlationHeader), "latency_ms", time.Since(start).Milliseconds(), "reason", reason)
 }
 
 // Runs before authentication because a dead service answers nobody.

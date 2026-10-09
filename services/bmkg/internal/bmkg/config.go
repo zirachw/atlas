@@ -16,13 +16,17 @@ const (
 
 type Config struct {
 	Address       string
+	DatabaseURL   string
 	APIKey        string
 	Delay         time.Duration
 	EventInterval time.Duration
 }
 
 func ConfigFromEnv() (Config, error) {
-	c := Config{Address: os.Getenv("HTTP_ADDR"), APIKey: os.Getenv("BMKG_API_KEY")}
+	c := Config{Address: os.Getenv("HTTP_ADDR"), DatabaseURL: os.Getenv("DATABASE_URL"), APIKey: os.Getenv("BMKG_API_KEY")}
+	if c.DatabaseURL == "" {
+		return c, errors.New("DATABASE_URL is required")
+	}
 	if c.Address == "" {
 		c.Address = ":8081"
 	}

@@ -10,6 +10,7 @@ const testToken = "pvmbg.demo.test-pvmbg-secret-value"
 func validTestEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("PVMBG_TOKEN", testToken)
+	t.Setenv("DATABASE_URL", "postgres://pvmbg:test@localhost/pvmbg")
 	for _, key := range []string{"HTTP_ADDR", "MIN_RESPONSE_DELAY", "MAX_RESPONSE_DELAY", "EVENT_INTERVAL"} {
 		t.Setenv(key, "")
 	}
@@ -32,6 +33,7 @@ func TestConfigDefaultsAndContractBounds(t *testing.T) {
 		})
 	}
 	for _, tc := range []struct{ key, value string }{
+		{"DATABASE_URL", ""},
 		{"PVMBG_TOKEN", ""},
 		{"PVMBG_TOKEN", "example-bmkg-only"},
 		{"PVMBG_TOKEN", "pvmbg.demo.too-short"},

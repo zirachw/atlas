@@ -7,17 +7,18 @@ import (
 )
 
 func TestGeneratedReportsKeepContract(t *testing.T) {
-	store := NewStore()
 	gen := NewGenerator(Seed, time.Unix(1_700_000_000, 0))
+	ids := map[string]bool{}
 	start := time.Now()
 	levels := map[string]int{}
 	for i := range 2000 {
 		version := 1 + i%2
 		now := start.Add(time.Duration(i) * time.Second)
 		r := gen.Next(now, version)
-		if err := store.Add(r); err != nil {
-			t.Fatal(err)
+		if err := validate(r); err != nil || ids[r.ReportID] {
+			t.Fatalf("report %s invalid or repeated: %v", r.ReportID, err)
 		}
+		ids[r.ReportID] = true
 		if !r.ReportedAt.Equal(now.UTC().Truncate(time.Millisecond)) {
 			t.Fatal("generated reports must use the current time, or the Aggregator checkpoint skips them")
 		}
@@ -53,7 +54,7 @@ func TestGeneratorIsReproducibleAndRestartSafe(t *testing.T) {
 }
 
 func TestRunGeneratorFollowsSchemaAndRunsDuringOutage(t *testing.T) {
-	store, controls := NewStore(), NewControls()
+	store, controls := &memoryStore{}, NewControls(1)
 	controls.SetOutage(Outage{Enabled: true, Mode: OutageError})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -64,7 +65,7 @@ func TestRunGeneratorFollowsSchemaAndRunsDuringOutage(t *testing.T) {
 	waitFor := func(cond func([]VolcanicReport) bool) {
 		t.Helper()
 		deadline := time.Now().Add(2 * time.Second)
-		for !cond(store.Reports(nil)) {
+		for !cond(store.snapshot()) {
 			if time.Now().After(deadline) {
 				t.Fatal("generator did not produce the expected reports")
 			}
@@ -76,9 +77,9 @@ func TestRunGeneratorFollowsSchemaAndRunsDuringOutage(t *testing.T) {
 	waitFor(func(r []VolcanicReport) bool { return r[len(r)-1].ConfidenceLevel != nil })
 	cancel()
 	<-done
-	count := len(store.Reports(nil))
+	count := store.count()
 	time.Sleep(20 * time.Millisecond)
-	if len(store.Reports(nil)) != count {
+	if store.count() != count {
 		t.Fatal("generator kept running after cancellation")
 	}
 }

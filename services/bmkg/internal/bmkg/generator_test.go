@@ -8,15 +8,16 @@ import (
 )
 
 func TestGeneratedEventsKeepContract(t *testing.T) {
-	store := NewStore()
 	gen := NewGenerator(Seed, time.Unix(1_700_000_000, 0))
+	ids := map[string]bool{}
 	start := time.Now()
 	var warned, unwarned int
 	for i := range 2000 {
 		event, warnings := gen.Next(start.Add(time.Duration(i) * time.Second))
-		if err := store.Add(event, warnings...); err != nil {
-			t.Fatal(err)
+		if err := validate(event, warnings); err != nil || ids[event.EventID] {
+			t.Fatalf("event %s invalid or repeated: %v", event.EventID, err)
 		}
+		ids[event.EventID] = true
 		if event.Magnitude < 3 || event.Magnitude > 7.8 || event.DepthKM < 5 || event.DepthKM > 200 {
 			t.Fatalf("out of range event %+v", event)
 		}
@@ -64,7 +65,7 @@ func TestGeneratorIsReproducibleAndRestartSafe(t *testing.T) {
 }
 
 func TestRunGeneratorAddsEventsUntilCancelled(t *testing.T) {
-	store := NewStore()
+	store := &memoryStore{}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
@@ -72,7 +73,7 @@ func TestRunGeneratorAddsEventsUntilCancelled(t *testing.T) {
 		close(done)
 	}()
 	deadline := time.Now().Add(2 * time.Second)
-	for len(store.Events(nil)) < 3 {
+	for store.count() < 3 {
 		if time.Now().After(deadline) {
 			t.Fatal("generator added too few events")
 		}
@@ -80,9 +81,9 @@ func TestRunGeneratorAddsEventsUntilCancelled(t *testing.T) {
 	}
 	cancel()
 	<-done
-	count := len(store.Events(nil))
+	count := store.count()
 	time.Sleep(20 * time.Millisecond)
-	if len(store.Events(nil)) != count {
+	if store.count() != count {
 		t.Fatal("generator kept running after cancellation")
 	}
 }

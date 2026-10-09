@@ -26,7 +26,7 @@ var regions = []region{
 
 const Seed = 4031 // IF4031
 
-// IDs embed the boot time so a restarted in-memory mock never reuses an ID the Aggregator stored.
+// IDs embed the boot time because seq restarts at 1, so a restarted mock never reuses a stored ID.
 type Generator struct {
 	rng  *rand.Rand
 	boot int64
@@ -75,7 +75,7 @@ func (g *Generator) Next(now time.Time) (SeismicEvent, []TsunamiWarning) {
 	}}
 }
 
-func RunGenerator(ctx context.Context, store *Store, gen *Generator, interval time.Duration, log *slog.Logger) {
+func RunGenerator(ctx context.Context, store Store, gen *Generator, interval time.Duration, log *slog.Logger) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -84,11 +84,21 @@ func RunGenerator(ctx context.Context, store *Store, gen *Generator, interval ti
 			return
 		case now := <-ticker.C:
 			event, warnings := gen.Next(now)
-			if err := store.Add(event, warnings...); err != nil {
-				log.Error("event_generation_failed", "service", "bmkg", "reason", err.Error())
+			id := newCorrelationID()
+			writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			start := time.Now()
+			err := store.Add(writeCtx, event, warnings...)
+			cancel()
+			reason := ""
+			if err != nil {
+				reason = err.Error()
+			}
+			log.Info("database_call", "service", "bmkg", "dependency", "bmkg_store", "operation", "add_event", "correlation_id", id, "latency_ms", time.Since(start).Milliseconds(), "reason", reason)
+			if err != nil {
+				log.Error("event_generation_failed", "service", "bmkg", "correlation_id", id, "event_id", event.EventID, "reason", err.Error())
 				continue
 			}
-			log.Info("event_generated", "service", "bmkg", "event_id", event.EventID, "magnitude", event.Magnitude, "potential_tsunami", event.PotentialTsunami, "warnings", len(warnings))
+			log.Info("event_generated", "service", "bmkg", "correlation_id", id, "event_id", event.EventID, "magnitude", event.Magnitude, "potential_tsunami", event.PotentialTsunami, "warnings", len(warnings))
 		}
 	}
 }

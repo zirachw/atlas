@@ -18,7 +18,8 @@ type Controls struct {
 	outage        Outage
 }
 
-func NewControls() *Controls { return &Controls{schemaVersion: 1} }
+// The schema version is cached here, while the store keeps it across restarts.
+func NewControls(schemaVersion int) *Controls { return &Controls{schemaVersion: schemaVersion} }
 
 func (c *Controls) SchemaVersion() int {
 	c.mu.RLock()
