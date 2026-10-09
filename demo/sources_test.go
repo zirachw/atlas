@@ -4,7 +4,9 @@ package demo
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -21,11 +23,29 @@ func checkSourceContract(t *testing.T, ev map[string]any) {
 		{"PVMBG", s.pvmbg + "/volcanic-reports", "Authorization", "Bearer " + s.env["PVMBG_TOKEN"], "reported_at", 3 * time.Second, 3300 * time.Millisecond},
 	} {
 		headers := map[string]string{src.header: src.value}
+		var sourceDuration time.Duration
 		read := func(query string) ([]map[string]any, time.Duration) {
+			started := time.Now().Add(-2 * time.Second)
+			id := fmt.Sprintf("demo-source-%d", time.Now().UnixNano())
+			headers["X-Correlation-ID"] = id
 			status, raw, took := call(t, http.MethodGet, src.path+query, "", "", headers)
 			var records []map[string]any
 			if status != http.StatusOK || json.Unmarshal(raw, &records) != nil {
 				t.Fatalf("%s%s status %d", src.name, query, status)
+			}
+			if query == "" {
+				// Compare the delay on the source clock; host and VM clocks can differ.
+				eventually(t, 5*time.Second, src.name+" request timing", func() bool {
+					for _, line := range s.logged(t, strings.ToLower(src.name), started, func(l map[string]any) bool {
+						return l["msg"] == "request" && l["correlation_id"] == id
+					}) {
+						if ms, ok := line["latency_ms"].(float64); ok {
+							sourceDuration = time.Duration(ms * float64(time.Millisecond))
+							return true
+						}
+					}
+					return false
+				})
 			}
 			return records, took
 		}
@@ -33,8 +53,8 @@ func checkSourceContract(t *testing.T, ev map[string]any) {
 		if len(all) < 20 {
 			t.Errorf("%s serves %d records, want at least 20 seeded", src.name, len(all))
 		}
-		if took < src.minDelay || took > src.maxDelay {
-			t.Errorf("%s answered in %s, want %s-%s", src.name, took, src.minDelay, src.maxDelay)
+		if sourceDuration < src.minDelay || sourceDuration > src.maxDelay || took > src.maxDelay {
+			t.Errorf("%s source latency %s, client latency %s, want source %s-%s and client at most %s", src.name, sourceDuration, took, src.minDelay, src.maxDelay, src.maxDelay)
 		}
 		pivot := toString(all[len(all)/2][src.timeField])
 		since, _ := read("?since=" + pivot)
@@ -46,7 +66,7 @@ func checkSourceContract(t *testing.T, ev map[string]any) {
 			fresh, _ := read("?since=" + started.Format(time.RFC3339Nano))
 			return len(fresh) > 0
 		})
-		ev[src.name] = map[string]any{"records": len(all), "response_ms": took.Milliseconds(), "new_record_within_seconds": time.Since(started).Seconds()}
+		ev[src.name] = map[string]any{"records": len(all), "response_ms": took.Milliseconds(), "source_response_ms": sourceDuration.Milliseconds(), "new_record_within_seconds": time.Since(started).Seconds()}
 	}
 }
 
