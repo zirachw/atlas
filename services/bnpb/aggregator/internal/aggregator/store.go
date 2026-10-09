@@ -69,12 +69,12 @@ func (s *Store) Failure(ctx context.Context, source string, now time.Time) error
 	return e
 }
 
-const columns = "hazard_id,source,source_ref_id,hazard_type,severity,area_name,latitude,longitude,occurred_at,ingested_at,attributes"
+const columns = "hazard_id,source,source_ref_id,hazard_type,severity,area_name,latitude,longitude,occurred_at,ingested_at,attributes,revision"
 
 func scanEvent(row pgx.Row) (HazardEvent, error) {
 	var h HazardEvent
 	var raw []byte
-	e := row.Scan(&h.HazardID, &h.Source, &h.SourceRefID, &h.HazardType, &h.Severity, &h.AreaName, &h.Latitude, &h.Longitude, &h.OccurredAt, &h.IngestedAt, &raw)
+	e := row.Scan(&h.HazardID, &h.Source, &h.SourceRefID, &h.HazardType, &h.Severity, &h.AreaName, &h.Latitude, &h.Longitude, &h.OccurredAt, &h.IngestedAt, &raw, &h.Revision)
 	if e == nil {
 		e = json.Unmarshal(raw, &h.Attributes)
 	}
@@ -102,22 +102,28 @@ func (s *Store) Save(ctx context.Context, source string, events []HazardEvent, c
 		return nil, e
 	}
 	defer tx.Rollback(ctx)
-	created := []HazardEvent{}
+	changed := []HazardEvent{}
 	for _, h := range events {
 		raw, e := json.Marshal(h.Attributes)
 		if e != nil {
 			return nil, e
 		}
-		var id string
-		e = tx.QueryRow(ctx, "INSERT INTO hazard_events ("+columns+") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT (source,source_ref_id) DO NOTHING RETURNING hazard_id", h.HazardID, h.Source, h.SourceRefID, h.HazardType, h.Severity, h.AreaName, h.Latitude, h.Longitude, h.OccurredAt, h.IngestedAt, string(raw)).Scan(&id)
-		if e == nil {
-			created = append(created, h)
-		} else if errors.Is(e, pgx.ErrNoRows) {
-			_, e = tx.Exec(ctx, "UPDATE hazard_events SET severity=$3,area_name=$4,latitude=$5,longitude=$6,occurred_at=$7,attributes=$8 WHERE source=$1 AND source_ref_id=$2", h.Source, h.SourceRefID, h.Severity, h.AreaName, h.Latitude, h.Longitude, h.OccurredAt, string(raw))
+		// Compare persisted values atomically; ingestion time and IDs remain stable on updates.
+		stored, err := scanEvent(tx.QueryRow(ctx, `INSERT INTO hazard_events (`+columns+`) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,1)
+ON CONFLICT (source,source_ref_id) DO UPDATE SET
+ severity=EXCLUDED.severity,area_name=EXCLUDED.area_name,latitude=EXCLUDED.latitude,
+ longitude=EXCLUDED.longitude,occurred_at=EXCLUDED.occurred_at,attributes=EXCLUDED.attributes,
+ revision=hazard_events.revision+1
+WHERE (hazard_events.severity,hazard_events.area_name,hazard_events.latitude,hazard_events.longitude,hazard_events.occurred_at,hazard_events.attributes)
+ IS DISTINCT FROM (EXCLUDED.severity,EXCLUDED.area_name,EXCLUDED.latitude,EXCLUDED.longitude,EXCLUDED.occurred_at,EXCLUDED.attributes)
+RETURNING `+columns, h.HazardID, h.Source, h.SourceRefID, h.HazardType, h.Severity, h.AreaName, h.Latitude, h.Longitude, h.OccurredAt, h.IngestedAt, string(raw)))
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
 		}
-		if e != nil {
-			return nil, e
+		if err != nil {
+			return nil, err
 		}
+		changed = append(changed, stored)
 	}
 	_, e = tx.Exec(ctx, "UPDATE source_progress SET checkpoint=CASE WHEN $2::timestamptz IS NULL THEN checkpoint ELSE GREATEST(checkpoint,$2::timestamptz) END,last_success_at=$3,stale_since=NULL WHERE source=$1", source, checkpoint, now)
 	if e != nil {
@@ -126,7 +132,7 @@ func (s *Store) Save(ctx context.Context, source string, events []HazardEvent, c
 	if e = tx.Commit(ctx); e != nil {
 		return nil, e
 	}
-	return created, nil
+	return changed, nil
 }
 func (s *Store) Read(ctx context.Context, q Query) (Response, error) {
 	out := Response{Data: []HazardEvent{}, Sources: []Freshness{}}

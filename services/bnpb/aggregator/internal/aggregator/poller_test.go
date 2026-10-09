@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -41,7 +42,10 @@ func (s *memoryStore) WarningEvents(_ context.Context, refs []string) ([]HazardE
 	out := []HazardEvent{}
 	for _, h := range s.events {
 		if slices.Contains(refs, h.SourceRefID) {
-			out = append(out, h)
+			raw, _ := json.Marshal(h)
+			var copy HazardEvent
+			_ = json.Unmarshal(raw, &copy)
+			out = append(out, copy)
 		}
 	}
 	return out, nil
@@ -60,10 +64,22 @@ func (s *memoryStore) Save(_ context.Context, source string, events []HazardEven
 	}
 	created := []HazardEvent{}
 	for _, h := range events {
-		if _, ok := s.events[h.HazardID]; !ok {
-			created = append(created, h)
+		raw, _ := json.Marshal(h)
+		_ = json.Unmarshal(raw, &h)
+		h.Revision = 1
+		if old, ok := s.events[h.HazardID]; ok {
+			h.IngestedAt, h.Revision = old.IngestedAt, old.Revision
+			if reflect.DeepEqual(old, h) {
+				continue
+			}
+			h.Revision++
 		}
-		s.events[h.HazardID] = h
+		created = append(created, h)
+		// Copy attributes like a persisted store so ApplyWarnings cannot mutate old state.
+		raw, _ = json.Marshal(h)
+		var stored HazardEvent
+		_ = json.Unmarshal(raw, &stored)
+		s.events[h.HazardID] = stored
 	}
 	s.checkpoint[source] = checkpoint
 	s.commits[source]++
@@ -285,12 +301,17 @@ func TestWarningsUseLookbackAndLoadOnlyReferencedEvents(t *testing.T) {
 	}))
 	defer server.Close()
 	store := newMemoryStore()
-	p := newPoller("BMKG", server.URL, store, make(chan Publication, 16))
+	pending := make(chan Publication, 16)
+	p := newPoller("BMKG", server.URL, store, pending)
 	if e := p.Poll(context.Background(), "first"); e != nil {
 		t.Fatal(e)
 	}
 	if len(store.warningLookups) != 0 {
 		t.Fatal("looked up stored events without any warning", store.warningLookups)
+	}
+	original := store.events[hazardID("BMKG", "quake-5")]
+	for len(pending) > 0 {
+		<-pending
 	}
 	// A late warning for an already stored event, beside an invalid one and a duplicate.
 	mu.Lock()
@@ -305,7 +326,62 @@ func TestWarningsUseLookbackAndLoadOnlyReferencedEvents(t *testing.T) {
 	if len(store.warningLookups) != 1 || !slices.Equal(store.warningLookups[0], []string{"quake-5"}) {
 		t.Fatal("must load only events referenced by valid warnings", store.warningLookups)
 	}
-	if h := store.events[hazardID("BMKG", "quake-5")]; h.Severity != "AWAS" {
-		t.Fatal("late warning not applied", h.Severity)
+	if len(pending) != 1 {
+		t.Fatal("missing update publication", len(pending))
+	}
+	update := (<-pending).Event
+	if update.HazardID != original.HazardID || update.Revision != 2 || update.Severity != "AWAS" || !update.IngestedAt.Equal(original.IngestedAt) {
+		t.Fatal("late warning revision or identity", update)
+	}
+	if e := p.Poll(context.Background(), "unchanged"); e != nil {
+		t.Fatal(e)
+	}
+	if len(pending) != 0 {
+		t.Fatal("unchanged warning published")
+	}
+}
+
+func TestLateWarningAttributeUpdatesAndReorderedWarnings(t *testing.T) {
+	seismic := fixture(t, "seismic.json")
+	first := fixture(t, "warnings.json")[0]
+	second := clone(first)
+	second["warning_id"] = json.RawMessage(`"warning-second"`)
+	second["affected_zones"] = json.RawMessage(`["additional-coast"]`)
+	warnings := []Object{first}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/tsunami-warnings" {
+			_ = json.NewEncoder(w).Encode(warnings)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(seismic)
+	}))
+	defer server.Close()
+	pending := make(chan Publication, 16)
+	store := newMemoryStore()
+	p := newPoller("BMKG", server.URL, store, pending)
+	if err := p.Poll(context.Background(), "first"); err != nil {
+		t.Fatal(err)
+	}
+	for len(pending) > 0 {
+		<-pending
+	}
+	seismic = []Object{}
+	warnings = []Object{first, second}
+	if err := p.Poll(context.Background(), "additional-warning"); err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 1 {
+		t.Fatal("attribute-only warning update missing", len(pending))
+	}
+	update := (<-pending).Event
+	if update.Revision != 2 || update.Severity != "AWAS" {
+		t.Fatal(update)
+	}
+	warnings = []Object{second, first}
+	if err := p.Poll(context.Background(), "reordered"); err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 0 {
+		t.Fatal("warning order caused republication")
 	}
 }

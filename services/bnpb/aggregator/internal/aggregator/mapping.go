@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 )
@@ -165,6 +166,7 @@ func ApplyWarnings(h HazardEvent, warnings []Warning) HazardEvent {
 			}
 		}
 	}
+	sort.Slice(selected, func(i, j int) bool { return string(selected[i]["warning_id"]) < string(selected[j]["warning_id"]) })
 	if len(selected) > 0 {
 		h.Attributes["tsunami_warnings"], _ = json.Marshal(selected)
 	}
@@ -201,7 +203,7 @@ func MapSeismic(o Object, warnings []Warning, now time.Time) (HazardEvent, error
 	if _, e = required[bool](o, "potential_tsunami"); e != nil {
 		return h, e
 	}
-	h = HazardEvent{hazardID("BMKG", ref), "BMKG", ref, "SEISMIC", "", area, lat, lon, when, now, extensions(o, "event_id", "region_name", "epicenter_lat", "epicenter_lon", "occurred_at")}
+	h = HazardEvent{hazardID("BMKG", ref), "BMKG", ref, "SEISMIC", "", area, lat, lon, when, now, extensions(o, "event_id", "region_name", "epicenter_lat", "epicenter_lon", "occurred_at"), 1}
 	// Preserve a source field that collides with the generated warning join.
 	if raw, ok := h.Attributes["tsunami_warnings"]; ok {
 		key := "source.tsunami_warnings"
@@ -253,6 +255,6 @@ func MapVolcanic(o Object, now time.Time) (HazardEvent, error) {
 			return h, e
 		}
 	}
-	h = HazardEvent{hazardID("PVMBG", ref), "PVMBG", ref, "VOLCANIC", severity, location.Name, location.Latitude, location.Longitude, when, now, extensions(o, "report_id", "reported_at", "alert_level")}
+	h = HazardEvent{hazardID("PVMBG", ref), "PVMBG", ref, "VOLCANIC", severity, location.Name, location.Latitude, location.Longitude, when, now, extensions(o, "report_id", "reported_at", "alert_level"), 1}
 	return h, nil
 }

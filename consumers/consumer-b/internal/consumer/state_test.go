@@ -50,3 +50,31 @@ func TestProcessedStateRepairsInterruptedAppend(t *testing.T) {
 		t.Fatalf("ledger=%q err=%v", raw, err)
 	}
 }
+
+func TestRevisionDeduplicationAcrossRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ledger")
+	state, err := OpenProcessedState(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, revision := range []int64{0, 2, 3} {
+		if fresh, err := state.RecordRevision("hazard-1", revision); err != nil || !fresh {
+			t.Fatal(revision, fresh, err)
+		}
+	}
+	state, err = OpenProcessedState(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, revision := range []int64{0, 1, 2, 3} {
+		if fresh, err := state.RecordRevision("hazard-1", revision); err != nil || fresh {
+			t.Fatal(revision, fresh, err)
+		}
+	}
+	if fresh, err := state.RecordRevision("hazard-1", 4); err != nil || !fresh {
+		t.Fatal(fresh, err)
+	}
+	if _, err := state.RecordRevision("hazard-1", -1); err == nil {
+		t.Fatal("negative revision accepted")
+	}
+}

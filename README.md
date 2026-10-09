@@ -196,9 +196,19 @@ curl -s http://localhost:8084/auth/refresh \
 
 Refresh rotates the refresh token and increments the session token version. Reusing the previous refresh token or access token fails. `GET /hazards` also accepts the Aggregator filters `source`, `hazard_type`, `severity`, `since`, and `limit`; it returns per-source freshness metadata in `sources`.
 
+## Hazard revisions and late tsunami warnings
+
+A new hazard starts at `revision=1`. If severity, area, coordinates, occurrence time, or attributes change, the Aggregator updates the same stored hazard, increments its revision, and publishes its committed snapshot. `hazard_id` and the original `ingested_at` remain stable. Identical polling results do not increment the revision or publish a message; JSON object key order and whitespace do not count as changes. Joined warnings are ordered by warning ID.
+
+For example, a seismic event is published as revision 1. A related tsunami warning arriving three minutes later updates severity and `attributes.tsunami_warnings`, and publishes revision 2. The warning joins only events with `potential_tsunami=true`. The existing one-hour warning lookback still applies. Broker messages contain `revision` and use `message_id=<hazard_id>:<revision>`; retries retain that identity. Revision is visible in the Aggregator API and the authorized raw Client API view; the summary projection keeps its specified fields.
+
+Existing canonical rows automatically receive revision 1 on Aggregator startup. Consumers treat messages without a revision and legacy bare-ID ledger entries as revision 1. Newer revisions use ledger entries `<hazard_id>:<revision>`, so duplicate deliveries add no effects while a later revision is processed. Deploy the updated consumers before the Aggregator so existing ID-only consumers do not discard updates. Consumers should use the revision when applying snapshots to avoid replacing newer data with older deliveries.
+
+Revision publication uses the existing bounded in-memory publisher, not a transactional outbox. The save/publish crash gap and exhausted retry loss remain; persisted revision does not by itself guarantee delivery. This update/publication policy is a group design decision because the M1 specification does not explicitly define late-warning publication.
+
 ## Event consumer demonstration
 
-Both consumers have separate durable queues and separate persistent idempotency files. The demonstration's stored effect is one ledger entry per `hazard_id`: the effect and duplicate marker are the same durable record. The consumer appends and syncs that record before ACK; a duplicate adds no record. On restart it reloads complete records and repairs an interrupted final append. Each ledger has one writer; it grows with processed IDs and is not designed for multiple replicas.
+Both consumers have separate durable queues and separate persistent idempotency files. The demonstration's stored effect is one ledger entry per `(hazard_id, revision)`: the effect and duplicate marker are the same durable record. The consumer appends and syncs that record before ACK; a duplicate adds no record. On restart it reloads complete records and repairs an interrupted final append. Each ledger has one writer; it grows with processed IDs and is not designed for multiple replicas.
 
 The supported M1 demo outage is 30 seconds, at up to two events per second and payloads no larger than 32 KiB, with catch-up within 60 seconds after restart. Newly created queues keep messages for one hour, bounded by 10,000 ready messages and 64 MiB of payload bytes. Beyond those bounds, TTL expires old messages or `reject-publish` returns a publisher NACK. Retries can deliver duplicate copies to other queues. See RabbitMQ's [queue limits](https://www.rabbitmq.com/docs/maxlength) and [message TTL](https://www.rabbitmq.com/docs/ttl). This is at-least-once processing of retained deliveries, with no unlimited outage or historical replay guarantee.
 

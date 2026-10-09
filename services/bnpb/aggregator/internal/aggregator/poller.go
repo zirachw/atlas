@@ -211,18 +211,18 @@ func (p *Poller) Poll(ctx context.Context, id string) error {
 			events = append(events, ApplyWarnings(h, warnings))
 		}
 	}
-	created, e := p.Store.Save(ctx, p.Source, events, checkpoint, time.Now().UTC())
+	changed, e := p.Store.Save(ctx, p.Source, events, checkpoint, time.Now().UTC())
 	if e != nil {
 		return errors.New("canonical commit failed")
 	}
-	for _, h := range created {
+	for _, h := range changed {
 		select {
 		case p.Pending <- Publication{h, id}:
 		default:
 			p.Log.Error("publication_dropped", "service", "aggregator", "source", p.Source, "hazard_id", h.HazardID, "correlation_id", id, "reason", "queue_full")
 		}
 	}
-	p.Log.Info("poll_committed", "service", "aggregator", "source", p.Source, "correlation_id", id, "created", len(created), "mapped", len(events), "checkpoint", checkpoint)
+	p.Log.Info("poll_committed", "service", "aggregator", "source", p.Source, "correlation_id", id, "published_revisions", len(changed), "mapped", len(events), "checkpoint", checkpoint)
 	return nil
 }
 func (p *Poller) Run(ctx context.Context) {
