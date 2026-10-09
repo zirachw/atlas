@@ -46,6 +46,7 @@ Every variable lives in `.env`, copied from `.env.example`. Compose passes each 
 | `POSTGRES_ADMIN_PASSWORD` | PostgreSQL | Superuser password, used only to create the two owner roles. | required |
 | `CANONICAL_DB_PASSWORD` | PostgreSQL, Aggregator | Password of the `aggregator` role that owns the Canonical Store. | required |
 | `AUTH_DB_PASSWORD` | PostgreSQL, Auth | Password of the `auth` role that owns the Auth Store. | required |
+| `BMKG_DB_PASSWORD`, `PVMBG_DB_PASSWORD` | Each agency database and its mock | Password of the agency's own database server. | required |
 | `RABBITMQ_USER`, `RABBITMQ_PASSWORD` | RabbitMQ, Aggregator, consumers | Broker credentials. | required |
 | `BMKG_API_KEY` | BMKG, Aggregator | BMKG key sent in `X-BMKG-Key`. | required |
 | `PVMBG_TOKEN` | PVMBG, Aggregator | PVMBG bearer token shaped `pvmbg.<key-id>.<secret>`, with a secret of at least 16 URL-safe characters. | required |
@@ -74,7 +75,7 @@ Every variable lives in `.env`, copied from `.env.example`. Compose passes each 
 
 ## Source mocks
 
-BMKG (`8081`) and PVMBG (`8082`) are passive. Each starts with 24 deterministic seed records and generates one new record every `SOURCE_EVENT_INTERVAL`. Data lives in memory and resets when a mock restarts. The `since` filter includes records at the requested timestamp.
+BMKG (`8081`) and PVMBG (`8082`) are passive. Each starts with 24 deterministic seed records and generates one new record every `SOURCE_EVENT_INTERVAL`. Each agency stores its records in its own PostgreSQL server (`bmkg-db`, `pvmbg-db`), on a network that only that agency joins. A restarted mock keeps its history and, for PVMBG, its schema version. The outage switch is not stored, so a restart always comes back without an outage. The `since` filter includes records at the requested timestamp.
 
 Load the example credentials into the shell first.
 
@@ -120,36 +121,27 @@ curl -i -H "X-BMKG-Key: $PVMBG_TOKEN" http://localhost:8081/seismic-events      
 curl -i -H "Authorization: Bearer $BMKG_API_KEY" http://localhost:8082/volcanic-reports    # 401
 ```
 
-### Source smoke test
-
-The script checks credentials, `since` filtering, delays, the schema switch, and both outage modes against the running mocks. It takes about 15 seconds and leaves PVMBG on schema version 1 without an outage.
-
-```sh
-./scripts/smoke-sources.sh
-```
-
 ### P2. Load test
 
-Install [k6](https://grafana.com/docs/k6/latest/set-up/install-k6/), start the stack, and set the three-second PVMBG delay as described above. The test runs 40 BMKG-only and 20 volcanic virtual users for 90 seconds. Each user keeps its own connection, so 60 users hold 60 parallel connections. Each user also refreshes its access token before the 60-second TTL ends, so token expiry does not show up as errors.
+`make demo-load` runs this load test on a fresh Compose stack and samples Client API connections, as described under Checks. To run k6 by hand against a stack you started yourself, install [k6](https://grafana.com/docs/k6/latest/set-up/install-k6/) and set the three-second PVMBG delay first.
 
 ```sh
 set -a; source .env; set +a
 CLIENT_ID=$INTERNAL_OPS_CLIENT_ID CLIENT_SECRET=$INTERNAL_OPS_CLIENT_SECRET k6 run loadtest/p2.js
+CLIENT_ID=$INTERNAL_OPS_CLIENT_ID CLIENT_SECRET=$INTERNAL_OPS_CLIENT_SECRET k6 run -e SCENARIO=burst loadtest/p2.js
 ```
 
-The summary reports throughput, p50, p95, and p99 per request kind. It counts unexpected errors and 429 rejections separately. To confirm the parallel connections, count them on Linux while the test runs.
-
-```sh
-ss -tn state established '( sport = :8080 )' | tail -n +2 | wc -l
-```
+The sustained scenario runs 40 BMKG-only and 20 volcanic virtual users for 90 seconds. Each user keeps its own connection and refreshes its token before the 60-second TTL ends. The burst scenario runs 400 users for 20 seconds, which exceeds Client API capacity and must produce counted 429 responses without unexpected errors.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `BMKG_VUS`, `VOLCANIC_VUS` | `40`, `20` | Virtual users per request kind. |
-| `DURATION` | `90s` | Sustained test length. |
+| `SCENARIO` | `sustained` | `sustained` for P2.1 and P2.2, or `burst` for controlled rejection. |
+| `BMKG_VUS`, `VOLCANIC_VUS` | `40`, `20` | Sustained virtual users per request kind. |
+| `BURST_VUS` | `400` | Burst virtual users. |
+| `DURATION` | `90s` or `20s` | Test length. |
 | `THINK_TIME` | `0` | Seconds each user waits between requests. |
 | `BASE_URL`, `AUTH_URL` | `http://localhost:8080`, `http://localhost:8084` | Client API and Auth addresses. |
-| `SUMMARY_JSON` | unset | File path for the full k6 summary. |
+| `SUMMARY_JSON`, `SUMMARY_TEXT` | unset | Files for the full k6 summary and the printed table. |
 
 ## Client API and Auth
 
@@ -268,22 +260,27 @@ docker compose --profile consumer-c-demo stop consumer-c-demo
 
 ## Checks
 
+Each test layer has one job, so no behavior is asserted twice.
+
+| Layer | Command | Proves |
+|---|---|---|
+| Unit | `make ci` | Logic inside one service, such as mapping rules, scopes, and credentials. CI runs this layer. |
+| Integration | `make integration` | One service against real PostgreSQL or RabbitMQ, such as checkpoints, grants, queue limits, and the save/publish crash gap. |
+| Demo | `make demo` | Every specification criterion, black-box, on a fresh Compose stack. |
+| Load | `make demo-load` | Demo plus the P2 sustained and overload k6 runs. |
+
+Demo checks are named by the criterion they prove, for example `P2.3 outage serves stale volcanic data and fresh seismic data`. `S1` is the source contract and `R1` to `R7` are the implementation rules. A full run writes `evidence/demo.md`, a matrix of every check and every criterion, and `evidence/demo.json` with the evidence each check recorded.
+
+For a live demonstration, run one problem at a time. Keep the stack between runs to skip the startup.
+
 ```sh
-make ci           # unit tests, quality, build, security
-make integration  # database and broker integration
-make e2e          # full-stack checks
-make e2e-p2       # full-stack checks with load testing
+DEMO_KEEP=1 make demo P=P1
+DEMO_KEEP=1 make demo P=P3
+DEMO_KEEP=1 DEMO_LOAD=1 make demo P=P2
+make demo P=P5
 ```
 
-Full-stack testing passed all 16 checks. Under load, BMKG reads reached p95 **64.2 ms** with **0% errors** while PVMBG responses took three seconds.
-
-![Full-stack test results](docs/evidence/e2e-summary.png)
-
-![Load test results](docs/evidence/p2-summary.png)
-
-[Detailed results](services/bnpb/aggregator/evidence/summary.json) · [Load metrics](services/bnpb/aggregator/evidence/p2-k6.json)
-
-The save/publish crash test confirms the known M1 limitation: stored data survives, but an event can be lost before publication. The outbox is deferred.
+A filtered run writes its matrix under `evidence/local/` so it never replaces the full evidence. The suite needs Docker and Go, and it runs on Linux, macOS, and Windows. P3.3 waits for a real 60-second token expiry, so a full run takes about 10 minutes.
 
 ## Compose networks
 
