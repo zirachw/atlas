@@ -1,9 +1,9 @@
 P2 sustained load test, 90s, 60 VUs
 
 kind      requests   req/s    p50 ms   p95 ms   p99 ms   errors     429
-bmkg        128306   1424.4     26.2     49.9     64.3     0.00%      0
-volcanic     64390    714.8     26.1     49.7     64.4     0.00%      0
+bmkg        102864   1142.9     31.9     65.1     90.1     0.00%      0
+volcanic     51638    573.8     31.8     64.9     89.6     0.00%      0
 
-BMKG-only p95 49.9 ms, target below 300 ms: PASS
+BMKG-only p95 65.1 ms, target below 300 ms: PASS
 Unexpected errors 0.00%, target below 1%: PASS
 Controlled 429 rejections 0, Auth failures 0
