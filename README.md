@@ -99,7 +99,9 @@ A new hazard starts at `revision=1`. If severity, area, coordinates, occurrence 
 
 For example, a seismic event is published as revision 1. A related tsunami warning that arrives three minutes later updates severity and `attributes.tsunami_warnings`, and publishes revision 2. The warning joins only events with `potential_tsunami=true`, within the one-hour warning lookback. Broker messages contain `revision` and use `message_id=<hazard_id>:<revision>`, and retries keep that identity. Revision is visible in the Aggregator API and the raw Client API view. The summary view keeps its specified fields.
 
-Publication uses a bounded in-memory publisher, not a transactional outbox. A crash between save and publish, or exhausted retries, can lose a publication, so a stored revision does not by itself guarantee delivery. The M1 spec does not define late-warning publication, so this policy is a team decision.
+Canonical revisions, checkpoints, immutable publication snapshots, and the ingestion correlation ID are committed together in the Aggregator's PostgreSQL transactional outbox. A separate relay reads up to 256 pending snapshots at a time. The bounded RAM channel provides optional wake-up hints; a full channel cannot discard SQL work. Failed publications remain pending across attempts and restarts. The relay deletes a row only after publisher confirmation without a mandatory return. If no queue is bound, the publication stays pending until a subscriber binds. A crash after confirmation but before deletion may deliver a duplicate with the same `(hazard_id, revision)` identity, which consumers deduplicate.
+
+The relay is single-instance, matching the Aggregator deployment. Broker downtime grows the outbox on disk while ingestion and stored reads continue; monitor database capacity and `publication_pending`, `outbox_read_failed`, and `outbox_confirm_failed` logs. Queue TTL/capacity and durable storage still bound subscriber delivery. Outbox does not reconstruct revisions lost before the upgrade and is not a permanent historical replay store. Revision publication is a team policy beyond the spec's new-event requirement.
 
 ## Event consumers
 
@@ -244,7 +246,7 @@ Each test layer has one job, so no behavior is asserted twice.
 | Layer | Command | Proves |
 |---|---|---|
 | Unit | `make ci` | Logic inside one service, such as mapping rules, scopes, and credentials. CI runs this layer. |
-| Integration | `make integration` | One service against real PostgreSQL or RabbitMQ, such as checkpoints, grants, queue limits, and the save/publish crash gap. |
+| Integration | `make integration` | One service against real PostgreSQL or RabbitMQ, such as checkpoints, grants, queue limits, and durable outbox recovery after a process crash or failed broker attempts. |
 | Demo | `make demo` | Every specification criterion, black-box, on a fresh Compose stack. |
 | Load | `make demo LOAD=1` | Demo plus the P2 sustained and overload k6 runs. |
 
@@ -275,3 +277,9 @@ The suite needs Docker and Go, and it runs on Linux, macOS, and Windows. P3.3 wa
 | `events` | RabbitMQ, Aggregator, consumers | Fanout publication and subscriptions. |
 
 The Client API belongs to no database network and receives no database credentials. BNPB's PostgreSQL server is shared infrastructure with separate `auth` and `aggregator` roles, and database grants deny cross-owner connections. Network separation controls reachability, and database grants control ownership on the shared server.
+
+## Outbox recovery verification
+
+`make integration` verifies transaction rollback, immutable revision snapshots, a real process exit immediately after commit, recovery after exhausted broker attempts, mandatory returns when no subscriber is bound, and duplicate identity after confirmation without deletion. `make test` also checks that a full RAM hint channel and a failed outbox deletion cannot lose pending work. Consumers already persist their `(hazard_id, revision)` ledger before ACK.
+
+The schema is created automatically on startup without rewriting canonical data or existing broker queues. Only newly committed changed revisions enter the outbox; existing identical canonical rows do not backfill historic publication gaps.

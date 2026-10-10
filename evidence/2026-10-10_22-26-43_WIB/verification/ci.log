@@ -1,0 +1,79 @@
+make[1]: Entering directory '/home/dadecky/itb/aat/tubes/atlas'
+lint ./services/bnpb/auth/go.mod
+0 issues.
+lint ./services/bnpb/client-api/go.mod
+0 issues.
+lint ./services/bnpb/aggregator/go.mod
+0 issues.
+lint ./services/bmkg/go.mod
+0 issues.
+lint ./services/pvmbg/go.mod
+0 issues.
+lint ./consumers/consumer-a/go.mod
+0 issues.
+lint ./consumers/consumer-b/go.mod
+0 issues.
+lint ./demo/go.mod
+0 issues.
+make[1]: Leaving directory '/home/dadecky/itb/aat/tubes/atlas'
+make[1]: Entering directory '/home/dadecky/itb/aat/tubes/atlas'
+test ./services/bnpb/auth/go.mod
+?   	atlas/services/bnpb/auth/cmd/auth	[no test files]
+ok  	atlas/services/bnpb/auth/internal/auth	2.202s
+test ./services/bnpb/client-api/go.mod
+?   	atlas/services/bnpb/client-api/cmd/client-api	[no test files]
+ok  	atlas/services/bnpb/client-api/internal/clientapi	1.125s
+test ./services/bnpb/aggregator/go.mod
+?   	atlas/services/bnpb/aggregator/cmd/aggregator	[no test files]
+ok  	atlas/services/bnpb/aggregator/internal/aggregator	1.408s
+test ./services/bmkg/go.mod
+?   	atlas/services/bmkg/cmd/bmkg	[no test files]
+ok  	atlas/services/bmkg/internal/bmkg	1.205s
+test ./services/pvmbg/go.mod
+?   	atlas/services/pvmbg/cmd/pvmbg	[no test files]
+ok  	atlas/services/pvmbg/internal/pvmbg	1.583s
+test ./consumers/consumer-a/go.mod
+?   	atlas/consumers/consumer-a/cmd/consumer	[no test files]
+ok  	atlas/consumers/consumer-a/internal/consumer	1.018s
+test ./consumers/consumer-b/go.mod
+?   	atlas/consumers/consumer-b/cmd/consumer	[no test files]
+ok  	atlas/consumers/consumer-b/internal/consumer	1.016s
+test ./demo/go.mod
+ok  	atlas/demo	1.010s
+make[1]: Leaving directory '/home/dadecky/itb/aat/tubes/atlas'
+make[1]: Entering directory '/home/dadecky/itb/aat/tubes/atlas'
+build ./services/bnpb/auth/go.mod
+build ./services/bnpb/client-api/go.mod
+build ./services/bnpb/aggregator/go.mod
+build ./services/bmkg/go.mod
+build ./services/pvmbg/go.mod
+build ./consumers/consumer-a/go.mod
+build ./consumers/consumer-b/go.mod
+build ./demo/go.mod
+make[1]: Leaving directory '/home/dadecky/itb/aat/tubes/atlas'
+make[1]: Entering directory '/home/dadecky/itb/aat/tubes/atlas'
+security ./services/bnpb/auth/go.mod
+all modules verified
+No vulnerabilities found.
+security ./services/bnpb/client-api/go.mod
+all modules verified
+No vulnerabilities found.
+security ./services/bnpb/aggregator/go.mod
+all modules verified
+No vulnerabilities found.
+security ./services/bmkg/go.mod
+all modules verified
+No vulnerabilities found.
+security ./services/pvmbg/go.mod
+all modules verified
+No vulnerabilities found.
+security ./consumers/consumer-a/go.mod
+all modules verified
+No vulnerabilities found.
+security ./consumers/consumer-b/go.mod
+all modules verified
+No vulnerabilities found.
+security ./demo/go.mod
+all modules verified
+No vulnerabilities found.
+make[1]: Leaving directory '/home/dadecky/itb/aat/tubes/atlas'

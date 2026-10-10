@@ -1,5 +1,7 @@
 package aggregator
 
+// Codex-assisted changes: atomic publication snapshots and persistent relay progress.
+
 import (
 	"context"
 	_ "embed"
@@ -145,7 +147,8 @@ func (s *Store) WarningEvents(ctx context.Context, refs []string) ([]HazardEvent
 	return out, rows.Err()
 }
 
-func (s *Store) Save(ctx context.Context, source string, events []HazardEvent, checkpoint *time.Time, now time.Time) (
+func (s *Store) Save(ctx context.Context, source string, events []HazardEvent, checkpoint *time.Time, now time.Time,
+	ids ...string) (
 	[]HazardEvent,
 	error,
 ) {
@@ -154,6 +157,11 @@ func (s *Store) Save(ctx context.Context, source string, events []HazardEvent, c
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
+
+	id := correlationID()
+	if len(ids) > 0 {
+		id = ids[0]
+	}
 
 	changed := []HazardEvent{}
 
@@ -191,6 +199,16 @@ func (s *Store) Save(ctx context.Context, source string, events []HazardEvent, c
 		}
 
 		changed = append(changed, stored)
+
+		payload, err := json.Marshal(stored)
+		if err != nil {
+			return nil, err
+		}
+
+		if _, err = tx.Exec(ctx, `INSERT INTO publication_outbox (hazard_id, revision, payload, correlation_id)
+			VALUES ($1, $2, $3, $4)`, stored.HazardID, stored.Revision, payload, id); err != nil {
+			return nil, err
+		}
 	}
 
 	_, err = tx.Exec(ctx, `
@@ -209,6 +227,43 @@ func (s *Store) Save(ctx context.Context, source string, events []HazardEvent, c
 	}
 
 	return changed, nil
+}
+
+func (s *Store) PendingPublications(ctx context.Context, limit int) ([]Publication, error) {
+	rows, err := s.ingest.Query(ctx, `SELECT payload, correlation_id FROM publication_outbox
+		ORDER BY created_at, hazard_id, revision LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := []Publication{}
+
+	for rows.Next() {
+		var (
+			raw  []byte
+			item Publication
+		)
+
+		if err = rows.Scan(&raw, &item.CorrelationID); err != nil {
+			return nil, err
+		}
+
+		if err = json.Unmarshal(raw, &item.Event); err != nil {
+			return nil, err
+		}
+
+		items = append(items, item)
+	}
+
+	return items, rows.Err()
+}
+
+func (s *Store) ConfirmPublication(ctx context.Context, item Publication) error {
+	_, err := s.ingest.Exec(ctx, `DELETE FROM publication_outbox WHERE hazard_id = $1 AND revision = $2`,
+		item.Event.HazardID, item.Event.Revision)
+
+	return err
 }
 
 func (s *Store) Read(ctx context.Context, q Query) (Response, error) {

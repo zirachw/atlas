@@ -26,3 +26,14 @@ CREATE TABLE IF NOT EXISTS source_progress (
 );
 
 INSERT INTO source_progress (source) VALUES ('BMKG'), ('PVMBG') ON CONFLICT DO NOTHING;
+
+-- Codex-assisted transactional outbox: immutable snapshots remain pending until broker confirmation.
+CREATE TABLE IF NOT EXISTS publication_outbox (
+    hazard_id text NOT NULL,
+    revision bigint NOT NULL,
+    payload jsonb NOT NULL,
+    correlation_id text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (hazard_id, revision)
+);
+CREATE INDEX IF NOT EXISTS publication_outbox_order ON publication_outbox (created_at, hazard_id, revision);

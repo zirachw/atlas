@@ -1,0 +1,755 @@
+{
+  "checks": [
+    {
+      "name": "R3 every service runs in its own container from one compose up",
+      "criteria": [
+        "R3"
+      ],
+      "status": "pass",
+      "seconds": 0.088315721,
+      "evidence": {
+        "containers": {
+          "aggregator": "running/healthy",
+          "auth": "running/healthy",
+          "bmkg": "running/healthy",
+          "bmkg-db": "running/healthy",
+          "client-api": "running/healthy",
+          "consumer-a": "running/healthy",
+          "consumer-b": "running/healthy",
+          "postgres": "running/healthy",
+          "pvmbg": "running/healthy",
+          "pvmbg-db": "running/healthy",
+          "rabbitmq": "running/healthy"
+        }
+      }
+    },
+    {
+      "name": "R1 services share no code",
+      "criteria": [
+        "R1"
+      ],
+      "status": "pass",
+      "seconds": 0.376864099,
+      "evidence": {
+        "modules": 8
+      }
+    },
+    {
+      "name": "S1 source mocks keep their seed, event rate, delay, and since contract",
+      "criteria": [
+        "S1"
+      ],
+      "status": "pass",
+      "seconds": 11.174687992,
+      "logic": [
+        "TestSeedMeetsContract",
+        "TestSinceQuery",
+        "TestDelayAppliesOnlyToAuthorizedDataRequests",
+        "TestRandomDelayStaysWithinBounds",
+        "TestRunGeneratorAddsEventsUntilCancelled"
+      ],
+      "evidence": {
+        "BMKG": {
+          "new_record_within_seconds": 1.203218806,
+          "records": 48,
+          "response_ms": 102,
+          "source_response_ms": 101
+        },
+        "PVMBG": {
+          "new_record_within_seconds": 3.00130444,
+          "records": 50,
+          "response_ms": 3001,
+          "source_response_ms": 3000
+        }
+      }
+    },
+    {
+      "name": "R4 a restarted source keeps its history and schema version",
+      "criteria": [
+        "R4",
+        "S1"
+      ],
+      "status": "pass",
+      "seconds": 16.276511639,
+      "logic": [
+        "TestIntegrationStorePersistsReportsAndSchemaVersion",
+        "TestIntegrationStorePersistsSeedAndFiltersSince"
+      ],
+      "evidence": {
+        "reports_before_and_after": [
+          55,
+          59
+        ],
+        "schema_version_after_restart": 2
+      }
+    },
+    {
+      "name": "R7 every service answers its health check",
+      "criteria": [
+        "R7"
+      ],
+      "status": "pass",
+      "seconds": 0.004057028,
+      "logic": [
+        "TestQueryValidationAndHealth",
+        "TestRoutesAndCorrelation"
+      ],
+      "evidence": {
+        "consumers": "health checked by Docker, see R3",
+        "health": {
+          "aggregator": 200,
+          "auth": 200,
+          "bmkg": 200,
+          "client-api": 200,
+          "pvmbg": 200
+        }
+      }
+    },
+    {
+      "name": "P1.1 both sources map to canonical HazardEvents",
+      "criteria": [
+        "P1.1"
+      ],
+      "status": "pass",
+      "seconds": 0.788948117,
+      "logic": [
+        "TestSeismicBoundariesAndWarnings",
+        "TestVolcanicAdditiveValuesAndStableIdentity",
+        "TestRequiredFieldsRejectMissingNullAndWrongType"
+      ],
+      "evidence": {
+        "sample": {
+          "BMKG": {
+            "area_name": "Selatan Jawa",
+            "attributes": {
+              "depth_km": 10,
+              "magnitude": 4.9,
+              "potential_tsunami": false
+            },
+            "hazard_id": "7e60fb756e50e187a19087b2796fc5d2b2fe27f9c09e9370ea9ead0ecf8ef7c5",
+            "hazard_type": "SEISMIC",
+            "ingested_at": "2026-10-10T15:27:36.535835Z",
+            "latitude": -9.59,
+            "longitude": 110.21,
+            "occurred_at": "2026-09-29T00:00:00Z",
+            "revision": 1,
+            "severity": "NORMAL",
+            "source": "BMKG",
+            "source_ref_id": "bmkg-seed-001"
+          },
+          "PVMBG": {
+            "area_name": "Merapi",
+            "attributes": {
+              "ash_column_height_m": 0,
+              "eruption_count_24h": 0,
+              "volcano_id": "merapi"
+            },
+            "hazard_id": "b3db469bb44e4a210e26b490b9bda665591f4b896d318e807605f65eb7f9c321",
+            "hazard_type": "VOLCANIC",
+            "ingested_at": "2026-10-10T15:27:39.329317Z",
+            "latitude": -7.54,
+            "longitude": 110.44,
+            "occurred_at": "2026-09-29T00:15:00Z",
+            "revision": 1,
+            "severity": "NORMAL",
+            "source": "PVMBG",
+            "source_ref_id": "pvmbg-seed-001"
+          }
+        },
+        "seed_mapping": {
+          "bmkg-seed-001": "SEISMIC NORMAL",
+          "bmkg-seed-002": "SEISMIC WASPADA",
+          "bmkg-seed-004": "SEISMIC SIAGA",
+          "bmkg-seed-006": "SEISMIC AWAS",
+          "bmkg-seed-008": "SEISMIC WASPADA",
+          "bmkg-seed-009": "SEISMIC SIAGA",
+          "pvmbg-seed-001": "VOLCANIC NORMAL Merapi -7.54 110.44"
+        }
+      }
+    },
+    {
+      "name": "P1.2-P1.4 schema change applies at runtime and stays valid",
+      "criteria": [
+        "P1.2",
+        "P1.3",
+        "P1.4"
+      ],
+      "status": "pass",
+      "seconds": 2.009079758,
+      "logic": [
+        "TestSchemaChangeAtRuntime",
+        "TestIntegrationLivePollingMappingFreshnessAndReads"
+      ],
+      "evidence": {
+        "containers_unchanged": [
+          "8a8f5bce161f",
+          "b1eadc9d6688"
+        ],
+        "new_event": {
+          "area_name": "Krakatau",
+          "attributes": {
+            "ash_column_height_m": 0,
+            "confidence_level": 0.9,
+            "eruption_count_24h": 0,
+            "volcano_id": "krakatau"
+          },
+          "hazard_id": "f3b3654b8d3b82e9a24607025c85b68934d9bf39227a7c669cd81897ae8ac7a3",
+          "hazard_type": "VOLCANIC",
+          "ingested_at": "2026-10-10T15:28:27.409916Z",
+          "latitude": -6.1,
+          "longitude": 105.42,
+          "occurred_at": "2026-10-10T15:28:24.228Z",
+          "revision": 1,
+          "severity": "NORMAL",
+          "source": "PVMBG",
+          "source_ref_id": "pvmbg-1791646096-000004"
+        }
+      }
+    },
+    {
+      "name": "P2.1-P2.2 BMKG reads stay fast under sustained load",
+      "criteria": [
+        "P2.1",
+        "P2.2"
+      ],
+      "status": "pass",
+      "seconds": 98.407072524,
+      "logic": [
+        "TestIndependentPollingDuringSlowSourceAndOutage",
+        "TestAPIAdmissionAndDeadline"
+      ],
+      "evidence": {
+        "bmkg_ms": {
+          "p50": 26.883175,
+          "p95": 54.146623999999996,
+          "p99": 72.29089284000003
+        },
+        "connection_samples": [
+          {
+            "at": "2026-10-10T22:28:36.613050064+07:00",
+            "connections": 61
+          },
+          {
+            "at": "2026-10-10T22:28:38.794775196+07:00",
+            "connections": 61
+          },
+          {
+            "at": "2026-10-10T22:28:41.028413012+07:00",
+            "connections": 61
+          },
+          {
+            "at": "2026-10-10T22:28:43.1808095+07:00",
+            "connections": 61
+          },
+          {
+            "at": "2026-10-10T22:28:45.35019977+07:00",
+            "connections": 61
+          },
+          {
+            "at": "2026-10-10T22:28:47.527749073+07:00",
+            "connections": 61
+          },
+          {
+            "at": "2026-10-10T22:28:49.689110635+07:00",
+            "connections": 61
+          },
+          {
+            "at": "2026-10-10T22:28:51.859655945+07:00",
+            "connections": 61
+          },
+          {
+            "at": "2026-10-10T22:28:54.034080535+07:00",
+            "connections": 61
+          },
+          {
+            "at": "2026-10-10T22:28:56.210343006+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T22:28:58.374804905+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T22:29:00.590039255+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T22:29:02.746423206+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T22:29:04.948758515+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T22:29:07.10337764+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T22:29:09.257268946+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T22:29:11.430334837+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T22:29:13.593635129+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T22:29:15.755225979+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T22:29:17.931169902+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T22:29:20.100611713+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T22:29:22.25139395+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T22:29:24.438834703+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T22:29:26.593549161+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T22:29:28.793546312+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T22:29:30.957118078+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T22:29:33.170011755+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T22:29:35.331294463+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T22:29:37.517605667+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T22:29:39.764094749+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T22:29:41.944127615+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T22:29:44.154321006+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T22:29:46.321011547+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T22:29:48.493641485+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T22:29:50.663630712+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T22:29:52.869756181+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T22:29:55.015343809+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T22:29:57.182942359+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T22:29:59.346134604+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T22:30:01.504785261+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T22:30:03.660225929+07:00",
+            "connections": 60
+          }
+        ],
+        "controlled_rejections": 0,
+        "files": "p2-sustained.json, p2-sustained.txt, p2-sustained-connections.json",
+        "pvmbg_call_ms": 3005,
+        "requests_per_second": 2045.334502301902,
+        "seconds_with_50_connections": 87.047175795,
+        "unexpected_error_rate": 0,
+        "volcanic_ms": {
+          "p50": 26.859499,
+          "p95": 54.01140299999992,
+          "p99": 71.82327681999993
+        }
+      }
+    },
+    {
+      "name": "P2.2 overload is rejected with counted 429 responses",
+      "criteria": [
+        "P2.2"
+      ],
+      "status": "pass",
+      "seconds": 26.410916377,
+      "logic": [
+        "TestAdmissionLimitDoesNotCallDependenciesAndReleasesCapacity",
+        "TestUpstream429PreservesStatusAndSafeRetryAfter"
+      ],
+      "evidence": {
+        "accepted_requests": 18427,
+        "controlled_rejections": 226769,
+        "files": "p2-burst.json, p2-burst.txt",
+        "unexpected_error_rate": 0
+      }
+    },
+    {
+      "name": "P2.3 outage serves stale volcanic data and fresh seismic data",
+      "criteria": [
+        "P2.3",
+        "R4"
+      ],
+      "status": "pass",
+      "seconds": 10.38810208,
+      "logic": [
+        "TestOutageErrorModeAndRecovery",
+        "TestIntegrationLivePollingMappingFreshnessAndReads"
+      ],
+      "evidence": {
+        "recovery_seconds": 5.108516131,
+        "seismic_during_outage": {
+          "ms": 2,
+          "status": 200
+        },
+        "stale_volcanic": {
+          "sources": [
+            {
+              "source": "PVMBG",
+              "status": "stale",
+              "stale_since": "2026-10-10T15:30:37.342186Z"
+            }
+          ],
+          "stored_records": 20
+        }
+      }
+    },
+    {
+      "name": "P2.3 hanging source never makes reads hang",
+      "criteria": [
+        "P2.3",
+        "R4"
+      ],
+      "status": "pass",
+      "seconds": 15.675467188,
+      "logic": [
+        "TestOutageHangModeSendsNoResponse",
+        "TestSourceBoundsRetriesAndCancellation"
+      ],
+      "evidence": {
+        "slowest_read_ms": 4,
+        "stale_after_seconds": 15.065614666
+      }
+    },
+    {
+      "name": "P3.1 agencies reject each other's credentials",
+      "criteria": [
+        "P3.1",
+        "R5"
+      ],
+      "status": "pass",
+      "seconds": 3.107815413,
+      "logic": [
+        "TestCredentialDomains"
+      ],
+      "evidence": {
+        "statuses": {
+          "Aggregator rejects the BMKG key": 401,
+          "BMKG accepts its key": 200,
+          "BMKG rejects a missing key": 401,
+          "BMKG rejects the PVMBG token as bearer": 401,
+          "BMKG rejects the PVMBG token as key": 403,
+          "Client API rejects the PVMBG token": 401,
+          "PVMBG accepts its token": 200,
+          "PVMBG rejects a missing token": 401,
+          "PVMBG rejects the BMKG key as bearer": 401,
+          "PVMBG rejects the BMKG key header": 401
+        }
+      }
+    },
+    {
+      "name": "P3.2 Media gets summary fields and raw requests get 403",
+      "criteria": [
+        "P3.2"
+      ],
+      "status": "pass",
+      "seconds": 2.6106267819999998,
+      "logic": [
+        "TestMediaRawRequestForbiddenAndRawClientGetsAllFields",
+        "TestSummaryFiltersRawFieldsAndPreservesFreshnessAndCorrelation"
+      ],
+      "evidence": {
+        "field_team_raw_status": 200,
+        "media_fields": [
+          "area_name",
+          "hazard_id",
+          "hazard_type",
+          "ingested_at",
+          "occurred_at",
+          "severity",
+          "source"
+        ],
+        "media_raw_status": 403
+      }
+    },
+    {
+      "name": "P3.3 expired token refreshes without login and the old token is rejected",
+      "criteria": [
+        "P3.3"
+      ],
+      "status": "pass",
+      "seconds": 62.616084586,
+      "logic": [
+        "TestNaturalExpiryThenRefreshWithoutLogin",
+        "TestLoginScopesAndRefreshSupersedesOldSessionVersion",
+        "TestIntegrationConcurrentRefreshRevocationAndExpiry"
+      ],
+      "evidence": {
+        "statuses": {
+          "expired token": 401,
+          "fresh token": 200,
+          "latest token": 200,
+          "latest token after reuse": 401,
+          "refresh without login": 200,
+          "refreshed token": 200,
+          "reused refresh token": 401,
+          "second refresh": 200,
+          "superseded token": 401
+        },
+        "ttl_seconds": 60
+      }
+    },
+    {
+      "name": "P3.4 no credentials are committed and .env.example lists every variable",
+      "criteria": [
+        "P3.4",
+        "R6"
+      ],
+      "status": "pass",
+      "seconds": 0.008104835,
+      "evidence": {
+        "env_example_variables": 27,
+        "files_scanned": 86
+      }
+    },
+    {
+      "name": "P4.2 old and new attribute shapes coexist without migration",
+      "criteria": [
+        "P4.2"
+      ],
+      "status": "pass",
+      "seconds": 4.541289827,
+      "logic": [
+        "TestIntegrationStoreCommitRollbackRestartAndOwnership"
+      ],
+      "evidence": {
+        "columns": "hazard_id text, source text, source_ref_id text, hazard_type text, severity text, area_name text, latitude double precision, longitude double precision, occurred_at timestamp with time zone, ingested_at timestamp with time zone, attributes jsonb, revision bigint",
+        "served_old_and_new": {
+          "new": 8,
+          "old": 164
+        },
+        "stored_with_and_without_confidence": "8 164"
+      }
+    },
+    {
+      "name": "P4.3 only the Aggregator reaches the Canonical Store and every store has one owner",
+      "criteria": [
+        "P4.3",
+        "R2"
+      ],
+      "status": "pass",
+      "seconds": 0.60345073,
+      "logic": [
+        "TestIntegrationStoreCommitRollbackRestartAndOwnership"
+      ],
+      "evidence": {
+        "denied": {
+          "aggregator on auth": true,
+          "auth on canonical": true
+        },
+        "store_networks": {
+          "auth-store": [
+            "auth",
+            "postgres"
+          ],
+          "bmkg-store": [
+            "bmkg",
+            "bmkg-db"
+          ],
+          "canonical": [
+            "aggregator",
+            "postgres"
+          ],
+          "pvmbg-store": [
+            "pvmbg",
+            "pvmbg-db"
+          ]
+        }
+      }
+    },
+    {
+      "name": "P5.1-P5.2 events fan out to independent consumers",
+      "criteria": [
+        "P5.1",
+        "P5.2"
+      ],
+      "status": "pass",
+      "seconds": 1.2844430039999999,
+      "logic": [
+        "TestIntegrationRabbitFanoutConfirmAndReconnect",
+        "TestIntegrationIndependentQueuesAndRestartCatchup"
+      ],
+      "evidence": {
+        "hazard_id": "019486d0893236cf2c61d8dd90a77ff813b251badc8697478dfd469f2e23d352",
+        "path": "aggregator broker_call confirmed, then event_processed in consumer-a and consumer-b"
+      }
+    },
+    {
+      "name": "P5.3 a stopped consumer blocks nothing and catches up",
+      "criteria": [
+        "P5.3",
+        "R4"
+      ],
+      "status": "pass",
+      "seconds": 5.661207242,
+      "logic": [
+        "TestIntegrationIndependentQueuesAndRestartCatchup",
+        "TestIntegrationRedeliveryAfterPersistBeforeAck"
+      ],
+      "evidence": {
+        "catch_up_seconds": 0.080419145,
+        "missed_while_down": [
+          "90f0771100cfd1f122d36fe5627de07664e40fde66b5d9852774b0cdea3cd5f5",
+          "09b6ccb3c7a5d144c849ad466f5cd8f464e3c73749147fe4e206896570a1e121",
+          "23351967e1d576664ecd8f07d10ae9e853365359df481fbde6cb57fda0888aa7",
+          "3e0d319292a784e985b49402ff723d3cf2022e104e2d846af98f9019eb9f367b"
+        ],
+        "seconds_down": 4.91744263
+      }
+    },
+    {
+      "name": "P5.4 a new consumer joins without producer changes",
+      "criteria": [
+        "P5.4"
+      ],
+      "status": "pass",
+      "seconds": 14.413987575,
+      "evidence": {
+        "hazard_id": "daba89103a50ff47a9f6e7b26251c19eff47d8b576e0872542a05132210aa5d7",
+        "producer_container_unchanged": "8a8f5bce161f"
+      }
+    },
+    {
+      "name": "R7 correlation IDs cross every service in a flow",
+      "criteria": [
+        "R7"
+      ],
+      "status": "pass",
+      "seconds": 2.885265544,
+      "logic": [
+        "TestAPIRouteMethodsAndCorrelation",
+        "TestSourceCallLogsDependencyAndSafeFailure"
+      ],
+      "evidence": {
+        "client_flow": "demo-1791646354795665395 seen in client-api, auth, aggregator",
+        "event_flow": "e554d8f782594a3a72293d4b0c67c92b seen in aggregator and consumer-a",
+        "poll_flow": "e554d8f782594a3a72293d4b0c67c92b seen in aggregator and bmkg"
+      }
+    },
+    {
+      "name": "R7 every outbound call logs its latency",
+      "criteria": [
+        "R7"
+      ],
+      "status": "pass",
+      "seconds": 6.688801393,
+      "logic": [
+        "TestSourceCallLogsDependencyAndSafeFailure"
+      ],
+      "evidence": {
+        "calls_checked": 11
+      }
+    },
+    {
+      "name": "P4.1 one service rebuilds while the others keep serving",
+      "criteria": [
+        "P4.1",
+        "R4"
+      ],
+      "status": "pass",
+      "seconds": 15.948895946,
+      "evidence": {
+        "aggregator_down_samples": 37,
+        "checkpoints_before": "BMKG|2026-10-10 15:32:40.268+00\nPVMBG|2026-10-10 15:32:40.228+00",
+        "independent_failures": 0,
+        "samples_during_rebuild": 41,
+        "stored_before_rebuild": "376 8ebae84797c082fd5a6c9e7309570f6d"
+      }
+    },
+    {
+      "name": "P2.3 failed source without stored data is explicitly unavailable",
+      "criteria": [
+        "P2.3"
+      ],
+      "status": "pass",
+      "seconds": 12.505496647,
+      "logic": [
+        "TestAPIAuthenticationQueriesAndFreshness"
+      ],
+      "evidence": {
+        "statuses": {
+          "mixed": 200,
+          "seismic": 200,
+          "volcanic": 503
+        }
+      }
+    }
+  ],
+  "run": {
+    "commit": "c08e313",
+    "docker": "29.7.2 16 41376174080",
+    "filter": "TestDemo",
+    "finished": "2026-10-10_22-33-12_WIB",
+    "host": "linux/amd64, 16 CPUs",
+    "settings": {
+      "ACCESS_TOKEN_TTL": "60s",
+      "AUTH_PORT": "0",
+      "BMKG_PORT": "0",
+      "CLIENT_API_PORT": "0",
+      "POLL_INTERVAL": "3s",
+      "PVMBG_MAX_RESPONSE_DELAY": "3s",
+      "PVMBG_MIN_RESPONSE_DELAY": "3s",
+      "PVMBG_PORT": "0",
+      "SOURCE_EVENT_INTERVAL": "2s"
+    },
+    "started": "2026-10-10_22-26-43_WIB",
+    "uncommitted_changes": true
+  }
+}
