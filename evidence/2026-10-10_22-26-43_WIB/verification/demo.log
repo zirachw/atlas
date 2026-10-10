@@ -1,0 +1,74 @@
+cd demo && DEMO_LOAD=1 DEMO_KEEP= go test -tags demo -count=1 -timeout 30m -v -run 'TestDemo' .
+=== RUN   TestDemo
+=== RUN   TestDemo/R3_every_service_runs_in_its_own_container_from_one_compose_up
+=== RUN   TestDemo/R1_services_share_no_code
+=== RUN   TestDemo/S1_source_mocks_keep_their_seed,_event_rate,_delay,_and_since_contract
+=== RUN   TestDemo/R4_a_restarted_source_keeps_its_history_and_schema_version
+=== RUN   TestDemo/R7_every_service_answers_its_health_check
+=== RUN   TestDemo/P1.1_both_sources_map_to_canonical_HazardEvents
+=== RUN   TestDemo/P1.2-P1.4_schema_change_applies_at_runtime_and_stays_valid
+=== RUN   TestDemo/P2.1-P2.2_BMKG_reads_stay_fast_under_sustained_load
+    p2_test.go:158: P2 sustained load test, 90s, 60 VUs
+
+        kind      requests   req/s    p50 ms   p95 ms   p99 ms   errors     429
+        bmkg        122652   1362.6     26.9     54.1     72.3     0.00%      0
+        volcanic     61460    682.8     26.9     54.0     71.8     0.00%      0
+
+        BMKG-only p95 54.1 ms, target below 300 ms: PASS
+        Unexpected errors 0.00%, target below 1%: PASS
+        Controlled 429 rejections 0, Auth failures 0
+
+=== RUN   TestDemo/P2.2_overload_is_rejected_with_counted_429_responses
+    p2_test.go:212: P2 overload burst test, 20s, 400 VUs
+
+        kind      requests   req/s    p50 ms   p95 ms   p99 ms   errors     429
+        bmkg        245196  12220.7     14.8    131.2    253.1     0.00% 226769
+
+        Controlled 429 rejections 226769, target above 0: PASS
+        Unexpected errors 0.00%, target below 1%: PASS
+        Controlled 429 rejections 226769, Auth failures 0
+
+=== RUN   TestDemo/P2.3_outage_serves_stale_volcanic_data_and_fresh_seismic_data
+=== RUN   TestDemo/P2.3_hanging_source_never_makes_reads_hang
+=== RUN   TestDemo/P3.1_agencies_reject_each_other's_credentials
+=== RUN   TestDemo/P3.2_Media_gets_summary_fields_and_raw_requests_get_403
+=== RUN   TestDemo/P3.3_expired_token_refreshes_without_login_and_the_old_token_is_rejected
+    p3_test.go:149: waiting 62s for the access token to expire naturally
+=== RUN   TestDemo/P3.4_no_credentials_are_committed_and_.env.example_lists_every_variable
+=== RUN   TestDemo/P4.2_old_and_new_attribute_shapes_coexist_without_migration
+=== RUN   TestDemo/P4.3_only_the_Aggregator_reaches_the_Canonical_Store_and_every_store_has_one_owner
+=== RUN   TestDemo/P5.1-P5.2_events_fan_out_to_independent_consumers
+=== RUN   TestDemo/P5.3_a_stopped_consumer_blocks_nothing_and_catches_up
+=== RUN   TestDemo/P5.4_a_new_consumer_joins_without_producer_changes
+=== RUN   TestDemo/R7_correlation_IDs_cross_every_service_in_a_flow
+=== RUN   TestDemo/R7_every_outbound_call_logs_its_latency
+=== RUN   TestDemo/P4.1_one_service_rebuilds_while_the_others_keep_serving
+=== RUN   TestDemo/P2.3_failed_source_without_stored_data_is_explicitly_unavailable
+--- PASS: TestDemo (314.48s)
+    --- PASS: TestDemo/R3_every_service_runs_in_its_own_container_from_one_compose_up (0.09s)
+    --- PASS: TestDemo/R1_services_share_no_code (0.38s)
+    --- PASS: TestDemo/S1_source_mocks_keep_their_seed,_event_rate,_delay,_and_since_contract (11.17s)
+    --- PASS: TestDemo/R4_a_restarted_source_keeps_its_history_and_schema_version (16.28s)
+    --- PASS: TestDemo/R7_every_service_answers_its_health_check (0.00s)
+    --- PASS: TestDemo/P1.1_both_sources_map_to_canonical_HazardEvents (0.79s)
+    --- PASS: TestDemo/P1.2-P1.4_schema_change_applies_at_runtime_and_stays_valid (2.01s)
+    --- PASS: TestDemo/P2.1-P2.2_BMKG_reads_stay_fast_under_sustained_load (98.41s)
+    --- PASS: TestDemo/P2.2_overload_is_rejected_with_counted_429_responses (26.41s)
+    --- PASS: TestDemo/P2.3_outage_serves_stale_volcanic_data_and_fresh_seismic_data (10.39s)
+    --- PASS: TestDemo/P2.3_hanging_source_never_makes_reads_hang (15.68s)
+    --- PASS: TestDemo/P3.1_agencies_reject_each_other's_credentials (3.11s)
+    --- PASS: TestDemo/P3.2_Media_gets_summary_fields_and_raw_requests_get_403 (2.61s)
+    --- PASS: TestDemo/P3.3_expired_token_refreshes_without_login_and_the_old_token_is_rejected (62.62s)
+    --- PASS: TestDemo/P3.4_no_credentials_are_committed_and_.env.example_lists_every_variable (0.01s)
+    --- PASS: TestDemo/P4.2_old_and_new_attribute_shapes_coexist_without_migration (4.54s)
+    --- PASS: TestDemo/P4.3_only_the_Aggregator_reaches_the_Canonical_Store_and_every_store_has_one_owner (0.60s)
+    --- PASS: TestDemo/P5.1-P5.2_events_fan_out_to_independent_consumers (1.28s)
+    --- PASS: TestDemo/P5.3_a_stopped_consumer_blocks_nothing_and_catches_up (5.66s)
+    --- PASS: TestDemo/P5.4_a_new_consumer_joins_without_producer_changes (14.41s)
+    --- PASS: TestDemo/R7_correlation_IDs_cross_every_service_in_a_flow (2.89s)
+    --- PASS: TestDemo/R7_every_outbound_call_logs_its_latency (6.69s)
+    --- PASS: TestDemo/P4.1_one_service_rebuilds_while_the_others_keep_serving (15.95s)
+    --- PASS: TestDemo/P2.3_failed_source_without_stored_data_is_explicitly_unavailable (12.51s)
+PASS
+demo report: /home/dadecky/itb/aat/tubes/atlas/evidence/2026-10-10_22-26-43_WIB/demo.md
+ok  	atlas/demo	392.016s

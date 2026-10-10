@@ -1,0 +1,8 @@
+P2 overload burst test, 20s, 400 VUs
+
+kind      requests   req/s    p50 ms   p95 ms   p99 ms   errors     429
+bmkg        245196  12220.7     14.8    131.2    253.1     0.00% 226769
+
+Controlled 429 rejections 226769, target above 0: PASS
+Unexpected errors 0.00%, target below 1%: PASS
+Controlled 429 rejections 226769, Auth failures 0

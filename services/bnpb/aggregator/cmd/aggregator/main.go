@@ -1,5 +1,7 @@
 package main
 
+// Codex-assisted changes: wiring the persistent outbox relay. See AI_USAGE.md.
+
 import (
 	"context"
 	"errors"
@@ -39,6 +41,8 @@ func run(log *slog.Logger) error {
 	worker := &aggregator.PublishWorker{
 		Publisher: &aggregator.RabbitPublisher{URL: c.RabbitMQURL, Timeout: c.PublishTimeout},
 		Pending:   pending,
+		Store:     store,
+		BatchSize: c.PublishCapacity,
 		Timeout:   c.PublishTimeout,
 		Backoff:   c.Backoff,
 		Retries:   c.PublishRetries,

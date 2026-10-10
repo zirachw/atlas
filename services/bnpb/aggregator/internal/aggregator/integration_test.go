@@ -34,7 +34,7 @@ func integrationStore(t *testing.T) *Store {
 	}
 
 	const reset = `
-		TRUNCATE hazard_events;
+		TRUNCATE hazard_events, publication_outbox;
 		UPDATE source_progress SET checkpoint = NULL, last_success_at = NULL, stale_since = NULL`
 	if _, err = s.ingest.Exec(ctx, reset); err != nil {
 		t.Fatal(err)
@@ -116,6 +116,19 @@ func TestIntegrationStoreCommitRollbackRestartAndOwnership(t *testing.T) {
 	data, err = s.Read(ctx, Query{Source: "PVMBG", Limit: 100})
 	if err != nil || len(data.Data) != 2 {
 		t.Fatal("rollback left row", data, err)
+	}
+
+	items, err := s.PendingPublications(ctx, 100)
+	if err != nil || len(items) != 3 {
+		t.Fatal("outbox rollback or changed revision count", items, err)
+	}
+
+	for _, item := range items {
+		if item.Event.HazardID == h.HazardID && item.Event.Revision == 1 {
+			if _, exists := item.Event.Attributes["confidence_level"]; exists {
+				t.Fatal("old outbox snapshot was reconstructed from the newest revision")
+			}
+		}
 	}
 
 	restarted, err := OpenStore(ctx, os.Getenv("TEST_DATABASE_URL"), 2, 4)

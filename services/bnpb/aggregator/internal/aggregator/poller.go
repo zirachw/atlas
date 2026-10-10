@@ -1,5 +1,7 @@
 package aggregator
 
+// Codex-assisted changes: durable outbox insertion and optional bounded relay hints. See AI_USAGE.md.
+
 import (
 	"context"
 	"encoding/json"
@@ -15,7 +17,7 @@ import (
 type IngestStore interface {
 	Checkpoint(context.Context, string) (*time.Time, error)
 	WarningEvents(context.Context, []string) ([]HazardEvent, error)
-	Save(context.Context, string, []HazardEvent, *time.Time, time.Time) ([]HazardEvent, error)
+	Save(context.Context, string, []HazardEvent, *time.Time, time.Time, ...string) ([]HazardEvent, error)
 	Failure(context.Context, string, time.Time) error
 }
 
@@ -30,7 +32,7 @@ type Poller struct {
 	Retries                     int
 	Client                      *http.Client
 	Store                       IngestStore
-	Pending                     chan<- Publication
+	Pending                     chan<- Publication // Wake-up hints only; SQL owns pending publication.
 	Log                         *slog.Logger
 }
 
@@ -285,7 +287,7 @@ func (p *Poller) Poll(ctx context.Context, id string) error {
 	}
 
 	start = time.Now()
-	changed, err := p.Store.Save(ctx, p.Source, events, checkpoint, time.Now().UTC())
+	changed, err := p.Store.Save(ctx, p.Source, events, checkpoint, time.Now().UTC(), id)
 	logDatabaseCall(p.Log, id, "save", start, err)
 
 	if err != nil {
@@ -296,13 +298,7 @@ func (p *Poller) Poll(ctx context.Context, id string) error {
 		select {
 		case p.Pending <- Publication{h, id}:
 		default:
-			p.Log.Error(
-				"publication_dropped",
-				"source", p.Source,
-				"hazard_id", h.HazardID,
-				"correlation_id", id,
-				"reason", "queue_full",
-			)
+			// The relay's periodic SQL scan recovers missing hints without losing work.
 		}
 	}
 
@@ -310,7 +306,7 @@ func (p *Poller) Poll(ctx context.Context, id string) error {
 		"poll_committed",
 		"source", p.Source,
 		"correlation_id", id,
-		"published_revisions", len(changed),
+		"outbox_revisions", len(changed),
 		"mapped", len(events),
 		"checkpoint", checkpoint,
 	)

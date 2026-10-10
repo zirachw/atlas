@@ -1,5 +1,7 @@
 package aggregator
 
+// Codex-assisted changes: mandatory routing and recovery of retained outbox publications. See AI_USAGE.md.
+
 import (
 	"context"
 	"encoding/json"
@@ -19,6 +21,7 @@ type RabbitPublisher struct {
 	conn    *amqp.Connection
 	channel *amqp.Channel
 	socket  net.Conn
+	returns <-chan amqp.Return
 }
 
 type EventPublisher interface {
@@ -28,10 +31,17 @@ type EventPublisher interface {
 
 type PublishWorker struct {
 	Publisher        EventPublisher
+	Store            PublicationStore
+	BatchSize        int
 	Pending          <-chan Publication
 	Timeout, Backoff time.Duration
 	Retries          int
 	Log              *slog.Logger
+}
+
+type PublicationStore interface {
+	PendingPublications(context.Context, int) ([]Publication, error)
+	ConfirmPublication(context.Context, Publication) error
 }
 
 const Exchange = "hazard.events"
@@ -44,6 +54,7 @@ func (p *RabbitPublisher) Close() {
 	p.conn = nil
 	p.channel = nil
 	p.socket = nil
+	p.returns = nil
 }
 
 func (p *RabbitPublisher) connect(ctx context.Context) error {
@@ -84,6 +95,8 @@ func (p *RabbitPublisher) connect(ctx context.Context) error {
 	}
 
 	p.channel = ch
+
+	p.returns = ch.NotifyReturn(make(chan amqp.Return, 1))
 	if err = ch.ExchangeDeclare(Exchange, "fanout", true, false, false, false, nil); err != nil {
 		p.Close()
 		return errors.New("broker exchange failed")
@@ -123,7 +136,7 @@ func (p *RabbitPublisher) Publish(ctx context.Context, item Publication) error {
 		Body:          raw,
 	}
 
-	confirm, err := p.channel.PublishWithDeferredConfirmWithContext(ctx, Exchange, "", false, false, message)
+	confirm, err := p.channel.PublishWithDeferredConfirmWithContext(ctx, Exchange, "", true, false, message)
 	if err == nil && confirm != nil {
 		var ack bool
 
@@ -134,10 +147,18 @@ func (p *RabbitPublisher) Publish(ctx context.Context, item Publication) error {
 	} else if err == nil {
 		err = errors.New("broker confirm missing")
 	}
+	// RabbitMQ sends a mandatory return before its confirm. Only one publication is in flight.
+	if err == nil {
+		select {
+		case <-p.returns:
+			err = errors.New("publication unroutable")
+		default:
+		}
+	}
 
 	if err != nil {
 		p.Close()
-		return errors.New("publication unconfirmed")
+		return err
 	}
 
 	_ = p.socket.SetDeadline(time.Time{})
@@ -178,7 +199,7 @@ func (w *PublishWorker) send(ctx context.Context, item Publication) bool {
 	}
 
 	w.Log.Error(
-		"publication_dropped",
+		"publication_pending",
 		"hazard_id", item.Event.HazardID,
 		"revision", item.Event.Revision,
 		"correlation_id", item.CorrelationID,
@@ -191,16 +212,52 @@ func (w *PublishWorker) send(ctx context.Context, item Publication) bool {
 func (w *PublishWorker) Run(ctx context.Context) {
 	defer w.Publisher.Close()
 
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case item, ok := <-w.Pending:
-			if !ok {
-				return
+	for ctx.Err() == nil {
+		batchSize := w.BatchSize
+		if batchSize <= 0 {
+			batchSize = 256
+		}
+
+		callCtx, cancel := context.WithTimeout(ctx, w.Timeout)
+		items, err := w.Store.PendingPublications(callCtx, batchSize)
+
+		cancel()
+
+		if err != nil {
+			w.Log.Error("outbox_read_failed")
+		}
+
+		for _, item := range items {
+			if !w.send(ctx, item) {
+				err = errors.New("publication pending")
+				break
 			}
 
-			w.send(ctx, item)
+			callCtx, cancel := context.WithTimeout(ctx, w.Timeout)
+			err = w.Store.ConfirmPublication(callCtx, item)
+
+			cancel()
+
+			if err != nil {
+				w.Log.Error("outbox_confirm_failed", "hazard_id", item.Event.HazardID,
+					"revision", item.Event.Revision, "correlation_id", item.CorrelationID)
+
+				break
+			}
 		}
+
+		if len(items) == batchSize && err == nil {
+			continue
+		}
+
+		// Periodic reads recover lost wake-ups and process restarts without any RAM backlog.
+		timer := time.NewTimer(time.Second)
+		select {
+		case <-ctx.Done():
+		case <-w.Pending:
+		case <-timer.C:
+		}
+
+		timer.Stop()
 	}
 }

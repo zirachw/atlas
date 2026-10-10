@@ -1,0 +1,165 @@
+./scripts/integration.sh
+ Network atlas-integration_auth-store Creating
+ Volume atlas-integration_postgres-data Creating
+ Volume atlas-integration_postgres-data Creating
+ Volume atlas-integration_bmkg-data Creating
+ Network atlas-integration_canonical Creating
+ Network atlas-integration_events Creating
+ Volume atlas-integration_pvmbg-data Creating
+ Volume atlas-integration_bmkg-data Creating
+ Network atlas-integration_canonical Creating
+ Network atlas-integration_pvmbg-store Creating
+ Volume atlas-integration_rabbitmq-data Creating
+ Network atlas-integration_test-host Creating
+ Volume atlas-integration_rabbitmq-data Creating
+ Network atlas-integration_auth-store Creating
+ Network atlas-integration_test-host Creating
+ Network atlas-integration_bmkg-store Creating
+ Network atlas-integration_pvmbg-store Creating
+ Network atlas-integration_bmkg-store Creating
+ Network atlas-integration_events Creating
+ Volume atlas-integration_pvmbg-data Creating
+ Volume atlas-integration_bmkg-data Created
+ Volume atlas-integration_bmkg-data Created
+ Volume atlas-integration_rabbitmq-data Created
+ Volume atlas-integration_rabbitmq-data Created
+ Volume atlas-integration_postgres-data Created
+ Volume atlas-integration_postgres-data Created
+ Volume atlas-integration_pvmbg-data Created
+ Volume atlas-integration_pvmbg-data Created
+ Network atlas-integration_pvmbg-store Created
+ Network atlas-integration_pvmbg-store Created
+ Network atlas-integration_canonical Created
+ Network atlas-integration_canonical Created
+ Network atlas-integration_bmkg-store Created
+ Network atlas-integration_bmkg-store Created
+ Network atlas-integration_test-host Created
+ Network atlas-integration_test-host Created
+ Container atlas-integration-pvmbg-db-1 Creating
+ Container atlas-integration-bmkg-db-1 Creating
+ Network atlas-integration_events Created
+ Network atlas-integration_events Created
+ Container atlas-integration-rabbitmq-1 Creating
+ Network atlas-integration_auth-store Created
+ Network atlas-integration_auth-store Created
+ Container atlas-integration-postgres-1 Creating
+ Container atlas-integration-pvmbg-db-1 Created
+ Container atlas-integration-bmkg-db-1 Created
+ Container atlas-integration-rabbitmq-1 Created
+ Container atlas-integration-postgres-1 Created
+ Container atlas-integration-bmkg-db-1 Starting
+ Container atlas-integration-postgres-1 Starting
+ Container atlas-integration-pvmbg-db-1 Starting
+ Container atlas-integration-rabbitmq-1 Starting
+ Container atlas-integration-bmkg-db-1 Started
+ Container atlas-integration-postgres-1 Started
+ Container atlas-integration-pvmbg-db-1 Started
+ Container atlas-integration-rabbitmq-1 Started
+ Container atlas-integration-bmkg-db-1 Waiting
+ Container atlas-integration-pvmbg-db-1 Waiting
+ Container atlas-integration-postgres-1 Waiting
+ Container atlas-integration-rabbitmq-1 Waiting
+ Container atlas-integration-bmkg-db-1 Healthy
+ Container atlas-integration-pvmbg-db-1 Healthy
+ Container atlas-integration-postgres-1 Healthy
+ Container atlas-integration-rabbitmq-1 Healthy
+=== RUN   TestIntegrationStorePersistsSeedAndFiltersSince
+--- PASS: TestIntegrationStorePersistsSeedAndFiltersSince (0.15s)
+PASS
+ok  	atlas/services/bmkg/internal/bmkg	1.159s
+=== RUN   TestIntegrationStorePersistsReportsAndSchemaVersion
+--- PASS: TestIntegrationStorePersistsReportsAndSchemaVersion (0.15s)
+PASS
+ok  	atlas/services/pvmbg/internal/pvmbg	1.172s
+=== RUN   TestIntegrationSavePublishProcessCrash
+    crash_integration_test.go:243: process_exit=77 committed_hazard_id=e266c012da3e6777f82c3958f6189a357a069ec986103711903f9b56e5f82250 checkpoint=2026-09-30T07:00:00+07:00 recovered_publications=1 duplicate_after_unmarked_confirm=1 control_hazard_id=2275536ca78626e3f33b1250d69f83ea5b88f4f53c7b4f5ae5f8fcf49deae10e confirmed=true
+--- PASS: TestIntegrationSavePublishProcessCrash (0.23s)
+=== RUN   TestIntegrationStoreCommitRollbackRestartAndOwnership
+    integration_test.go:167: restart_snapshot={"data":[{"hazard_id":"e4b61b24194cf9af8c5d334f27b0ac4fe50d320590f1dd952d3a35e50f60ec02","source":"PVMBG","source_ref_id":"report-2","hazard_type":"VOLCANIC","severity":"SIAGA","area_name":"Merapi","latitude":-7.54,"longitude":110.44,"occurred_at":"2026-09-30T07:00:10+07:00","ingested_at":"2026-10-10T22:25:06.429819+07:00","attributes":{"ash_column_height_m":1200.0,"confidence_level":0.85,"eruption_count_24h":3,"observations":{"sensor":"demo","quality":[1,true,null]},"volcano_id":"merapi"},"revision":1},{"hazard_id":"e266c012da3e6777f82c3958f6189a357a069ec986103711903f9b56e5f82250","source":"PVMBG","source_ref_id":"report-1","hazard_type":"VOLCANIC","severity":"SIAGA","area_name":"Merapi","latitude":-7.54,"longitude":110.44,"occurred_at":"2026-09-30T07:00:00+07:00","ingested_at":"2026-10-10T22:25:06.429819+07:00","attributes":{"ash_column_height_m":1200.0,"confidence_level":0.8,"eruption_count_24h":3,"volcano_id":"merapi"},"revision":2}],"sources":[{"source":"PVMBG","status":"stale","last_success_at":"2026-10-10T22:25:06.429819+07:00","stale_since":"2026-10-10T22:25:06.429819+07:00"}]} checkpoint=2026-09-30T07:00:10+07:00
+    integration_test.go:168: verified unique identity, rollback, checkpoint restart, JSONB and denied non-owner connection
+--- PASS: TestIntegrationStoreCommitRollbackRestartAndOwnership (0.12s)
+=== RUN   TestIntegrationLivePollingMappingFreshnessAndReads
+    integration_test.go:369: outage_snapshot={"data":[{"hazard_id":"e4b61b24194cf9af8c5d334f27b0ac4fe50d320590f1dd952d3a35e50f60ec02","source":"PVMBG","source_ref_id":"report-2","hazard_type":"VOLCANIC","severity":"SIAGA","area_name":"Merapi","latitude":-7.54,"longitude":110.44,"occurred_at":"2026-09-30T07:00:10+07:00","ingested_at":"2026-10-10T22:25:06.568996+07:00","attributes":{"ash_column_height_m":1200.0,"confidence_level":0.85,"eruption_count_24h":3,"observations":{"sensor":"demo","quality":[1,true,null]},"volcano_id":"merapi"},"revision":1},{"hazard_id":"e266c012da3e6777f82c3958f6189a357a069ec986103711903f9b56e5f82250","source":"PVMBG","source_ref_id":"report-1","hazard_type":"VOLCANIC","severity":"SIAGA","area_name":"Merapi","latitude":-7.54,"longitude":110.44,"occurred_at":"2026-09-30T07:00:00+07:00","ingested_at":"2026-10-10T22:25:06.560899+07:00","attributes":{"ash_column_height_m":1200.0,"eruption_count_24h":3,"volcano_id":"merapi"},"revision":1}],"sources":[{"source":"PVMBG","status":"stale","last_success_at":"2026-10-10T22:25:09.587094+07:00","stale_since":"2026-10-10T22:25:09.59613+07:00"}]}
+    integration_test.go:397: verified live additive schema, late warning, three-second isolation, stored reads, stale outage and automatic recovery
+--- PASS: TestIntegrationLivePollingMappingFreshnessAndReads (3.12s)
+=== RUN   TestIntegrationRabbitFanoutConfirmAndReconnect
+    integration_test.go:515: verified publisher confirms, durable fanout, persistent messages, same IDs, offline queue backlog and connection recovery
+--- PASS: TestIntegrationRabbitFanoutConfirmAndReconnect (0.03s)
+=== RUN   TestIntegrationUnroutablePublicationRetainedUntilSubscriberBinds
+    outbox_integration_test.go:100: no bindings returns an error; outbox relay confirms and removes pending row only after a subscriber binds
+--- PASS: TestIntegrationUnroutablePublicationRetainedUntilSubscriberBinds (0.09s)
+=== RUN   TestIntegrationBrokerFailureDoesNotExhaustDurableWork
+    outbox_integration_test.go:149: three failed broker attempts retain outbox; fresh relay after recovery delivers the original snapshot
+--- PASS: TestIntegrationBrokerFailureDoesNotExhaustDurableWork (0.08s)
+PASS
+ok  	atlas/services/bnpb/aggregator/internal/aggregator	4.675s
+=== RUN   TestIntegrationSessionSurvivesAuthStoreRestart
+--- PASS: TestIntegrationSessionSurvivesAuthStoreRestart (0.08s)
+=== RUN   TestIntegrationConcurrentRefreshRevocationAndExpiry
+--- PASS: TestIntegrationConcurrentRefreshRevocationAndExpiry (0.06s)
+PASS
+ok  	atlas/services/bnpb/auth/internal/auth	1.155s
+=== RUN   TestIntegrationRedeliveryAfterPersistBeforeAck
+--- PASS: TestIntegrationRedeliveryAfterPersistBeforeAck (0.02s)
+=== RUN   TestIntegrationQueueBoundsAndRetention
+--- PASS: TestIntegrationQueueBoundsAndRetention (1.21s)
+=== RUN   TestIntegrationIndependentQueuesAndRestartCatchup
+--- PASS: TestIntegrationIndependentQueuesAndRestartCatchup (0.07s)
+=== RUN   TestIntegrationExistingQueueKeepsBacklog
+=== RUN   TestIntegrationExistingQueueKeepsBacklog/existing_with_different_limits
+=== RUN   TestIntegrationExistingQueueKeepsBacklog/new_queue
+--- PASS: TestIntegrationExistingQueueKeepsBacklog (1.25s)
+    --- PASS: TestIntegrationExistingQueueKeepsBacklog/existing_with_different_limits (1.23s)
+    --- PASS: TestIntegrationExistingQueueKeepsBacklog/new_queue (0.03s)
+PASS
+ok  	atlas/consumers/consumer-a/internal/consumer	3.583s
+=== RUN   TestIntegrationRedeliveryAfterPersistBeforeAck
+--- PASS: TestIntegrationRedeliveryAfterPersistBeforeAck (0.03s)
+=== RUN   TestIntegrationQueueBoundsAndRetention
+--- PASS: TestIntegrationQueueBoundsAndRetention (1.22s)
+=== RUN   TestIntegrationIndependentQueuesAndRestartCatchup
+--- PASS: TestIntegrationIndependentQueuesAndRestartCatchup (0.08s)
+=== RUN   TestIntegrationExistingQueueKeepsBacklog
+=== RUN   TestIntegrationExistingQueueKeepsBacklog/existing_with_different_limits
+=== RUN   TestIntegrationExistingQueueKeepsBacklog/new_queue
+--- PASS: TestIntegrationExistingQueueKeepsBacklog (1.25s)
+    --- PASS: TestIntegrationExistingQueueKeepsBacklog/existing_with_different_limits (1.23s)
+    --- PASS: TestIntegrationExistingQueueKeepsBacklog/new_queue (0.02s)
+PASS
+ok  	atlas/consumers/consumer-b/internal/consumer	3.583s
+ Container atlas-integration-bmkg-db-1 Stopping
+ Container atlas-integration-pvmbg-db-1 Stopping
+ Container atlas-integration-rabbitmq-1 Stopping
+ Container atlas-integration-postgres-1 Stopping
+ Container atlas-integration-pvmbg-db-1 Stopped
+ Container atlas-integration-pvmbg-db-1 Removing
+ Container atlas-integration-bmkg-db-1 Stopped
+ Container atlas-integration-bmkg-db-1 Removing
+ Container atlas-integration-pvmbg-db-1 Removed
+ Container atlas-integration-bmkg-db-1 Removed
+ Container atlas-integration-postgres-1 Stopped
+ Container atlas-integration-postgres-1 Removing
+ Container atlas-integration-postgres-1 Removed
+ Container atlas-integration-rabbitmq-1 Stopped
+ Container atlas-integration-rabbitmq-1 Removing
+ Container atlas-integration-rabbitmq-1 Removed
+ Volume atlas-integration_rabbitmq-data Removing
+ Volume atlas-integration_pvmbg-data Removing
+ Network atlas-integration_auth-store Removing
+ Network atlas-integration_test-host Removing
+ Network atlas-integration_bmkg-store Removing
+ Volume atlas-integration_bmkg-data Removing
+ Network atlas-integration_pvmbg-store Removing
+ Volume atlas-integration_postgres-data Removing
+ Network atlas-integration_canonical Removing
+ Network atlas-integration_events Removing
+ Volume atlas-integration_postgres-data Removed
+ Network atlas-integration_test-host Removed
+ Volume atlas-integration_pvmbg-data Removed
+ Network atlas-integration_bmkg-store Removed
+ Volume atlas-integration_bmkg-data Removed
+ Volume atlas-integration_rabbitmq-data Removed
+ Network atlas-integration_auth-store Removed
+ Network atlas-integration_pvmbg-store Removed
+ Network atlas-integration_events Removed
+ Network atlas-integration_canonical Removed

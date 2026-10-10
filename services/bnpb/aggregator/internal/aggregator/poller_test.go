@@ -25,6 +25,7 @@ type memoryStore struct {
 	failures       map[string]int
 	failSave       bool
 	warningLookups [][]string
+	outbox         []Publication
 }
 
 func newMemoryStore() *memoryStore {
@@ -73,7 +74,8 @@ func (s *memoryStore) Failure(_ context.Context, source string, _ time.Time) err
 	return nil
 }
 
-func (s *memoryStore) Save(_ context.Context, source string, events []HazardEvent, checkpoint *time.Time, _ time.Time) (
+func (s *memoryStore) Save(_ context.Context, source string, events []HazardEvent, checkpoint *time.Time, _ time.Time,
+	ids ...string) (
 	[]HazardEvent,
 	error,
 ) {
@@ -108,12 +110,37 @@ func (s *memoryStore) Save(_ context.Context, source string, events []HazardEven
 
 		_ = json.Unmarshal(raw, &stored)
 		s.events[h.HazardID] = stored
+
+		id := ""
+		if len(ids) > 0 {
+			id = ids[0]
+		}
+
+		s.outbox = append(s.outbox, Publication{stored, id})
 	}
 
 	s.checkpoint[source] = checkpoint
 	s.commits[source]++
 
 	return created, nil
+}
+
+func (s *memoryStore) PendingPublications(_ context.Context, limit int) ([]Publication, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return slices.Clone(s.outbox[:min(limit, len(s.outbox))]), nil
+}
+
+func (s *memoryStore) ConfirmPublication(_ context.Context, item Publication) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.outbox = slices.DeleteFunc(s.outbox, func(p Publication) bool {
+		return p.Event.HazardID == item.Event.HazardID && p.Event.Revision == item.Event.Revision
+	})
+
+	return nil
 }
 
 func newPoller(source, base string, store IngestStore, pending chan Publication) *Poller {

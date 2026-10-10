@@ -54,7 +54,7 @@ func TestPublisherRetryKeepsIdentityAndBounds(t *testing.T) {
 }
 
 func TestPublicationQueueOverflowDoesNotStopCommit(t *testing.T) {
-	// Queue failure remains an explicit documented loss after persistence.
+	// Hints are optional: pending work remains durable when the bounded hint queue is full.
 	store := newMemoryStore()
 
 	server := sourceFixtureServer(t, "volcanic-v2.json")
@@ -71,15 +71,19 @@ func TestPublicationQueueOverflowDoesNotStopCommit(t *testing.T) {
 	if len(store.events) != 1 || len(pending) != 1 {
 		t.Fatal("overflow blocked ingestion")
 	}
-	// A committed event omitted from publication is not recreated by duplicate polling.
+
+	if len(store.outbox) != 1 {
+		t.Fatal("full hint queue lost the outbox entry")
+	}
+
 	<-pending
 
 	if err := p.Poll(context.Background(), "after-gap"); err != nil {
 		t.Fatal(err)
 	}
 
-	if len(pending) != 0 {
-		t.Fatal("unexpected outbox guarantee")
+	if len(pending) != 0 || len(store.outbox) != 1 {
+		t.Fatal("unchanged polling must preserve the original pending snapshot")
 	}
 }
 
@@ -89,4 +93,50 @@ func sourceFixtureServer(t *testing.T, name string) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(data)
 	}))
+}
+
+func TestOutboxFailedWorkerRetainsWorkForFreshWorker(t *testing.T) {
+	s := newMemoryStore()
+	s.outbox = []Publication{{Event: HazardEvent{HazardID: "retained", Revision: 2}, CorrelationID: "original-poll"}}
+	failing := &publisherStub{fail: 1000}
+	w := &PublishWorker{
+		Publisher: failing, Store: s, Timeout: time.Second,
+		Backoff: time.Millisecond, Retries: 2, Log: testLog(),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+
+	go func() { w.Run(ctx); close(done) }()
+
+	waitFor(t, func() bool {
+		failing.mu.Lock()
+		defer failing.mu.Unlock()
+
+		return len(failing.items) >= 3
+	})
+	cancel()
+	<-done
+
+	if pending, err := s.PendingPublications(context.Background(), 1); err != nil || len(pending) != 1 {
+		t.Fatal("worker discarded unconfirmed work", pending, err)
+	}
+
+	recovered := &publisherStub{}
+	w.Publisher = recovered
+	ctx, cancel = context.WithCancel(context.Background())
+	done = make(chan struct{})
+
+	go func() { w.Run(ctx); close(done) }()
+
+	waitFor(t, func() bool {
+		pending, err := s.PendingPublications(context.Background(), 1)
+		return err == nil && len(pending) == 0
+	})
+	cancel()
+	<-done
+
+	if len(recovered.items) != 1 || recovered.items[0].Event.HazardID != "retained" ||
+		recovered.items[0].Event.Revision != 2 || recovered.items[0].CorrelationID != "original-poll" {
+		t.Fatal("fresh worker lost snapshot identity", recovered.items)
+	}
 }

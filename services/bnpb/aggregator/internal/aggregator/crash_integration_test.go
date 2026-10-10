@@ -26,8 +26,9 @@ func (s crashAfterCommitStore) Save(
 	events []HazardEvent,
 	cp *time.Time,
 	now time.Time,
+	ids ...string,
 ) ([]HazardEvent, error) {
-	created, err := s.Store.Save(ctx, source, events, cp, now)
+	created, err := s.Store.Save(ctx, source, events, cp, now, ids...)
 	if err == nil && len(created) > 0 {
 		os.Exit(77)
 	}
@@ -147,7 +148,7 @@ func TestIntegrationSavePublishProcessCrash(t *testing.T) {
 		t.Fatal("committed row lost", data, err)
 	}
 
-	lostID := data.Data[0].HazardID
+	recoveredID := data.Data[0].HazardID
 	pending := make(chan Publication, 4)
 
 	p := newPoller("PVMBG", source.URL, restarted, pending)
@@ -162,7 +163,44 @@ func TestIntegrationSavePublishProcessCrash(t *testing.T) {
 	if _, ok, err := ch.Get(q.Name, true); err != nil || ok {
 		t.Fatal("unexpected publication of crash event", ok, err)
 	}
-	// A subsequent new event does publish: recovery works, but the old gap remains.
+
+	items, err := restarted.PendingPublications(ctx, 4)
+	if err != nil || len(items) != 1 || items[0].Event.HazardID != recoveredID ||
+		items[0].CorrelationID != "crash-after-commit" {
+		t.Fatal("crash lost the durable publication snapshot", items, err)
+	}
+
+	publisher := &RabbitPublisher{URL: broker, Timeout: time.Second}
+	defer publisher.Close()
+
+	// Confirm before marking delivered, then recreate relay state: the only possible extra effect is a duplicate.
+	if err = publisher.Publish(ctx, items[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	publisher.Close()
+
+	items, err = restarted.PendingPublications(ctx, 4)
+	if err != nil || len(items) != 1 {
+		t.Fatal("unmarked confirm lost pending work", items, err)
+	}
+
+	if err = publisher.Publish(ctx, items[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	for range 2 {
+		msg, ok, err := ch.Get(q.Name, true)
+		if err != nil || !ok || msg.MessageId != recoveredID+":1" {
+			t.Fatal("recovered snapshot or duplicate identity lost", msg.MessageId, ok, err)
+		}
+	}
+
+	if err = restarted.ConfirmPublication(ctx, items[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	// New ingestion proceeds after recovery without recreating the delivered revision.
 	recovered.Store(true)
 
 	if err = p.Poll(ctx, "post-crash-control"); err != nil {
@@ -174,12 +212,9 @@ func TestIntegrationSavePublishProcessCrash(t *testing.T) {
 	}
 
 	item := <-pending
-	if item.Event.HazardID == lostID {
+	if item.Event.HazardID == recoveredID {
 		t.Fatal("control reused crash event")
 	}
-
-	publisher := &RabbitPublisher{URL: broker, Timeout: time.Second}
-	defer publisher.Close()
 
 	if err = publisher.Publish(ctx, item); err != nil {
 		t.Fatal(err)
@@ -206,7 +241,7 @@ func TestIntegrationSavePublishProcessCrash(t *testing.T) {
 	}
 
 	t.Logf(
-		"process_exit=77 committed_hazard_id=%s checkpoint=%s replay_publications=0 control_hazard_id=%s confirmed=true; known M1 save/publish loss reproduced",
-		lostID, cp.Format(time.RFC3339), item.Event.HazardID,
+		"process_exit=77 committed_hazard_id=%s checkpoint=%s recovered_publications=1 duplicate_after_unmarked_confirm=1 control_hazard_id=%s confirmed=true",
+		recoveredID, cp.Format(time.RFC3339), item.Event.HazardID,
 	)
 }
