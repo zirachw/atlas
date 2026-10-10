@@ -1,0 +1,398 @@
+{
+  "checks": [
+    {
+      "name": "",
+      "criteria": null,
+      "status": "",
+      "seconds": 0
+    },
+    {
+      "name": "",
+      "criteria": null,
+      "status": "",
+      "seconds": 0
+    },
+    {
+      "name": "",
+      "criteria": null,
+      "status": "",
+      "seconds": 0
+    },
+    {
+      "name": "",
+      "criteria": null,
+      "status": "",
+      "seconds": 0
+    },
+    {
+      "name": "",
+      "criteria": null,
+      "status": "",
+      "seconds": 0
+    },
+    {
+      "name": "",
+      "criteria": null,
+      "status": "",
+      "seconds": 0
+    },
+    {
+      "name": "",
+      "criteria": null,
+      "status": "",
+      "seconds": 0
+    },
+    {
+      "name": "P2.1-P2.2 BMKG reads stay fast under sustained load",
+      "criteria": [
+        "P2.1",
+        "P2.2"
+      ],
+      "status": "pass",
+      "seconds": 106.2908799,
+      "logic": [
+        "TestIndependentPollingDuringSlowSourceAndOutage",
+        "TestAPIAdmissionAndDeadline"
+      ],
+      "evidence": {
+        "bmkg_ms": {
+          "p50": 26.195572499999997,
+          "p95": 49.93845875,
+          "p99": 64.25433569999998
+        },
+        "connection_samples": [
+          {
+            "at": "2026-10-10T15:09:20.2577198+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:09:22.8121961+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:09:25.3473004+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:09:27.853792+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:09:30.365481+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:09:32.9181568+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:09:35.4361566+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:09:37.9514573+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:09:40.4442771+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:09:43.0007235+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:09:45.5470583+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:09:48.0680807+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:09:50.5956907+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:09:53.1102337+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:09:55.6377935+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:09:58.1371139+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:10:00.6448571+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:10:03.1651575+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:10:05.6785733+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:10:08.1965308+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:10:10.7068425+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:10:13.2234492+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:10:15.7177428+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:10:18.2124021+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:10:20.7341731+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:10:23.2537309+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:10:25.7681773+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:10:28.277756+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:10:30.773176+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:10:33.2971791+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:10:35.8023708+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:10:38.342745+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:10:40.836559+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:10:43.3367883+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:10:45.8311669+07:00",
+            "connections": 60
+          },
+          {
+            "at": "2026-10-10T15:10:48.3716262+07:00",
+            "connections": 60
+          }
+        ],
+        "controlled_rejections": 0,
+        "files": "p2-sustained.json, p2-sustained.txt, p2-sustained-connections.json",
+        "pvmbg_call_ms": 3002,
+        "requests_per_second": 2139.231415756626,
+        "seconds_with_50_connections": 88.1138976,
+        "unexpected_error_rate": 0,
+        "volcanic_ms": {
+          "p50": 26.0711485,
+          "p95": 49.74867784999998,
+          "p99": 64.35928773
+        }
+      }
+    },
+    {
+      "name": "P2.2 overload is rejected with counted 429 responses",
+      "criteria": [
+        "P2.2"
+      ],
+      "status": "pass",
+      "seconds": 25.2087617,
+      "logic": [
+        "TestAdmissionLimitDoesNotCallDependenciesAndReleasesCapacity",
+        "TestUpstream429PreservesStatusAndSafeRetryAfter"
+      ],
+      "evidence": {
+        "accepted_requests": 26928,
+        "controlled_rejections": 271875,
+        "files": "p2-burst.json, p2-burst.txt",
+        "unexpected_error_rate": 0
+      }
+    },
+    {
+      "name": "P2.3 outage serves stale volcanic data and fresh seismic data",
+      "criteria": [
+        "P2.3",
+        "R4"
+      ],
+      "status": "pass",
+      "seconds": 12.8660201,
+      "logic": [
+        "TestOutageErrorModeAndRecovery",
+        "TestIntegrationLivePollingMappingFreshnessAndReads"
+      ],
+      "evidence": {
+        "recovery_seconds": 6.4273058,
+        "seismic_during_outage": {
+          "ms": 3,
+          "status": 200
+        },
+        "stale_volcanic": {
+          "sources": [
+            {
+              "source": "PVMBG",
+              "status": "stale",
+              "stale_since": "2026-10-10T08:11:22.066943Z"
+            }
+          ],
+          "stored_records": 20
+        }
+      }
+    },
+    {
+      "name": "P2.3 hanging source never makes reads hang",
+      "criteria": [
+        "P2.3",
+        "R4"
+      ],
+      "status": "pass",
+      "seconds": 15.0033632,
+      "logic": [
+        "TestOutageHangModeSendsNoResponse",
+        "TestSourceBoundsRetriesAndCancellation"
+      ],
+      "evidence": {
+        "slowest_read_ms": 8,
+        "stale_after_seconds": 14.0857215
+      }
+    },
+    {
+      "name": "",
+      "criteria": null,
+      "status": "",
+      "seconds": 0
+    },
+    {
+      "name": "",
+      "criteria": null,
+      "status": "",
+      "seconds": 0
+    },
+    {
+      "name": "",
+      "criteria": null,
+      "status": "",
+      "seconds": 0
+    },
+    {
+      "name": "",
+      "criteria": null,
+      "status": "",
+      "seconds": 0
+    },
+    {
+      "name": "",
+      "criteria": null,
+      "status": "",
+      "seconds": 0
+    },
+    {
+      "name": "",
+      "criteria": null,
+      "status": "",
+      "seconds": 0
+    },
+    {
+      "name": "",
+      "criteria": null,
+      "status": "",
+      "seconds": 0
+    },
+    {
+      "name": "",
+      "criteria": null,
+      "status": "",
+      "seconds": 0
+    },
+    {
+      "name": "",
+      "criteria": null,
+      "status": "",
+      "seconds": 0
+    },
+    {
+      "name": "",
+      "criteria": null,
+      "status": "",
+      "seconds": 0
+    },
+    {
+      "name": "",
+      "criteria": null,
+      "status": "",
+      "seconds": 0
+    },
+    {
+      "name": "",
+      "criteria": null,
+      "status": "",
+      "seconds": 0
+    },
+    {
+      "name": "P2.3 failed source without stored data is explicitly unavailable",
+      "criteria": [
+        "P2.3"
+      ],
+      "status": "pass",
+      "seconds": 15.681951,
+      "logic": [
+        "TestAPIAuthenticationQueriesAndFreshness"
+      ],
+      "evidence": {
+        "statuses": {
+          "mixed": 200,
+          "seismic": 200,
+          "volcanic": 503
+        }
+      }
+    }
+  ],
+  "run": {
+    "commit": "280416e",
+    "docker": "27.1.1 12 7899430912",
+    "filter": "TestDemo/P2",
+    "finished": "2026-10-10_15-12-04_WIB",
+    "host": "windows/amd64, 12 CPUs",
+    "settings": {
+      "ACCESS_TOKEN_TTL": "60s",
+      "AUTH_PORT": "0",
+      "BMKG_PORT": "0",
+      "CLIENT_API_PORT": "0",
+      "POLL_INTERVAL": "3s",
+      "PVMBG_MAX_RESPONSE_DELAY": "3s",
+      "PVMBG_MIN_RESPONSE_DELAY": "3s",
+      "PVMBG_PORT": "0",
+      "SOURCE_EVENT_INTERVAL": "2s"
+    },
+    "started": "2026-10-10_15-08-18_WIB",
+    "uncommitted_changes": true
+  }
+}
