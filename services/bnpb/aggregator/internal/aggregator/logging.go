@@ -6,13 +6,11 @@ import (
 )
 
 func logDatabaseCall(log *slog.Logger, id, operation string, start time.Time, err error) {
-	if log == nil {
-		return
-	}
 	reason := ""
 	if err != nil {
 		reason = "store_error"
 	}
-	log.Info("database_call", "service", "aggregator", "dependency", "canonical_store", "operation", operation,
+
+	log.Info("database_call", "dependency", "canonical_store", "operation", operation,
 		"correlation_id", id, "latency_ms", time.Since(start).Milliseconds(), "reason", reason)
 }
