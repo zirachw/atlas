@@ -1,12 +1,12 @@
 FROM golang:1.27.2-alpine AS build
 WORKDIR /app
-COPY go.mod ./
+COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -o /auth ./cmd/auth
 
 FROM alpine:3.24
-RUN apk add --no-cache ca-certificates && adduser -D -u 10001 atlas
+RUN adduser -D -u 10001 atlas
 COPY --from=build /auth /usr/local/bin/auth
 USER atlas
 EXPOSE 8084
