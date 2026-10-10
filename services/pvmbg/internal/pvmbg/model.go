@@ -36,5 +36,6 @@ func validate(r VolcanicReport) error {
 	case r.ConfidenceLevel != nil && (*r.ConfidenceLevel < 0 || *r.ConfidenceLevel > 1):
 		return fmt.Errorf("report %s has confidence_level outside 0 to 1", r.ReportID)
 	}
+
 	return nil
 }

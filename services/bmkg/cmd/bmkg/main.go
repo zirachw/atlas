@@ -18,25 +18,46 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
 	startup, stop := context.WithTimeout(ctx, 15*time.Second)
+
 	store, err := bmkg.OpenStore(startup, cfg.DatabaseURL)
 	if err == nil {
-		err = bmkg.LoadFixtures(startup, store)
+		err = bmkg.LoadSeed(startup, store)
 	}
+
 	stop()
+
 	if err != nil {
 		return err
 	}
+
 	defer store.Close()
 	go bmkg.RunGenerator(ctx, store, bmkg.NewGenerator(bmkg.Seed, time.Now()), cfg.EventInterval, log)
 
 	api := &bmkg.API{Store: store, APIKey: cfg.APIKey, Delay: cfg.Delay, Log: log}
-	server := &http.Server{Addr: cfg.Address, Handler: api.Handler(), ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
+	server := &http.Server{
+		Addr:              cfg.Address,
+		Handler:           api.Handler(),
+		ReadHeaderTimeout: 3 * time.Second,
+		ReadTimeout:       5 * time.Second,
+		WriteTimeout:      5 * time.Second,
+		IdleTimeout:       30 * time.Second,
+		MaxHeaderBytes:    16 << 10,
+	}
+
 	done := make(chan error, 1)
 	go func() { done <- server.ListenAndServe() }()
-	log.Info("started", "service", "bmkg", "address", cfg.Address, "delay_ms", cfg.Delay.Milliseconds(), "event_interval", cfg.EventInterval.String())
+
+	log.Info("started",
+		"address", cfg.Address,
+		"delay_ms", cfg.Delay.Milliseconds(),
+		"event_interval", cfg.EventInterval.String(),
+	)
+
 	select {
 	case <-ctx.Done():
 	case err = <-done:
@@ -44,16 +65,19 @@ func run(log *slog.Logger) error {
 			err = nil
 		}
 	}
+
 	shutdown, finish := context.WithTimeout(context.Background(), 5*time.Second)
 	defer finish()
+
 	_ = server.Shutdown(shutdown)
+
 	return err
 }
 
 func main() {
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	log := slog.New(slog.NewJSONHandler(os.Stdout, nil)).With("service", "bmkg")
 	if err := run(log); err != nil {
-		log.Error("stopped", "service", "bmkg", "reason", err.Error())
+		log.Error("stopped", "reason", err.Error())
 		os.Exit(1)
 	}
 }
