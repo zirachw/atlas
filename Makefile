@@ -2,65 +2,58 @@
 SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
 
-.PHONY: help setup quality fmt test build security ci dev start stop logs
+.PHONY: help env lint fmt test build security ci dev start stop logs integration demo
+
+GOLANGCI_LINT_VERSION := v2.14.0
+GOLANGCI_LINT := $(CURDIR)/bin/golangci-lint-$(GOLANGCI_LINT_VERSION)/golangci-lint$(if $(filter Windows_NT,$(OS)),.exe)
 
 define in_modules
 @mapfile -d '' -t modules < <( \
 	find . -type d \( -name .git -o -name vendor -o -name docs \) -prune \
 		-o -type f -name go.mod -print0 \
 ); \
-if (( $${#modules[@]} == 0 )); then \
-	echo "No application Go modules exist yet. Add a go.mod and application code before running checks." >&2; \
-	exit 1; \
-fi; \
 for module_file in "$${modules[@]}"; do \
 	( \
 		cd "$$(dirname "$$module_file")"; \
 		echo "$@ $$module_file"; \
-		packages=$$(go list ./...); \
-		if [[ -z "$$packages" ]]; then \
-			echo "No Go packages found in $$module_file." >&2; \
-			exit 1; \
-		fi; \
 		$(1) \
 	); \
 done
 endef
 
 help:
-	@echo "make setup     Download Go dependencies"
-	@echo "make quality   Check formatting and run go vet"
-	@echo "make fmt       Format Go source files"
-	@echo "make test      Run tests with race detection"
-	@echo "make build     Compile Go packages"
-	@echo "make security  Verify dependencies and scan known vulnerabilities"
-	@echo "make ci        Run all four checks"
-	@echo "make dev       Build and start Compose with foreground logs"
-	@echo "make start     Start Compose in the background"
-	@echo "make stop      Stop Compose and preserve volumes"
-	@echo "make logs      Follow Compose logs"
+	@echo "make env          Write .env from .env.example with fresh secrets"
+	@echo "make lint         Check formatting, go vet, and the linters with golangci-lint"
+	@echo "make fmt          Format Go source files with gofumpt and goimports"
+	@echo "make test         Run tests with race detection"
+	@echo "make build        Compile Go packages"
+	@echo "make security     Verify dependencies and scan known vulnerabilities"
+	@echo "make ci           Run all four checks"
+	@echo "make dev          Build and start Compose with foreground logs"
+	@echo "make start        Start Compose in the background"
+	@echo "make stop         Stop Compose and preserve volumes"
+	@echo "make logs         Follow Compose logs"
 	@echo "make integration  Test services with disposable PostgreSQL and RabbitMQ"
-	@echo "make demo  Check every spec criterion on Compose, P=P3 limits to one problem"
-	@echo "make demo-load  Also run the P2 sustained and overload k6 tests"
+	@echo "make demo         Check every spec criterion on Compose. P=P3 runs one problem, LOAD=1 adds k6, KEEP=1 keeps the stack"
 
-setup:
-	$(call in_modules,go mod download)
+env:
+	./scripts/env.sh
 
-quality:
-	$(call in_modules, \
-		unformatted=$$(find . -type d \( -name .git -o -name vendor \) -prune \
-			-o -type f -name '*.go' -print0 | xargs -0 -r gofmt -l); \
-		if [[ -n "$$unformatted" ]]; then \
-			printf '%s\n' "$$unformatted"; \
-			echo "Run make fmt to format these files." >&2; \
-			exit 1; \
-		fi; \
-		go vet ./...)
+$(GOLANGCI_LINT):
+	curl -sSfL https://golangci-lint.run/install.sh | sh -s -- -b "$(dir $@)" $(GOLANGCI_LINT_VERSION)
 
-fmt:
-	$(call in_modules, \
-		find . -type d \( -name .git -o -name vendor \) -prune \
-			-o -type f -name '*.go' -print0 | xargs -0 -r gofmt -w)
+# gofumpt only separates multiline declarations, so this also covers one-line ones.
+lint: $(GOLANGCI_LINT)
+	@git ls-files -co --exclude-standard '*.go' | xargs awk ' \
+		FNR == 1 { prev = "" } \
+		/^(func|type|var|const) / && prev != "" && prev !~ /^\/\// { \
+			print FILENAME ":" FNR ": add a blank line above this top-level declaration"; bad = 1 \
+		} \
+		{ prev = $$0 } END { exit bad }'
+	$(call in_modules,"$(GOLANGCI_LINT)" run ./...)
+
+fmt: $(GOLANGCI_LINT)
+	$(call in_modules,"$(GOLANGCI_LINT)" fmt ./...)
 
 test:
 	$(call in_modules,go test -race -count=1 -timeout=5m ./...)
@@ -74,7 +67,7 @@ security:
 		go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -test ./...)
 
 ci:
-	@$(MAKE) quality
+	@$(MAKE) lint
 	@$(MAKE) test
 	@$(MAKE) build
 	@$(MAKE) security
@@ -91,15 +84,10 @@ stop:
 logs:
 	docker compose logs -f
 
-.PHONY: integration
 integration:
-	./scripts/test-aggregator-integration.sh
+	./scripts/integration.sh
 
 DEMO_RUN = TestDemo$(if $(P),/$(P))
 
-.PHONY: demo demo-load
 demo:
-	cd demo && go test -tags demo -count=1 -timeout 30m -v -run '$(DEMO_RUN)' .
-
-demo-load:
-	DEMO_LOAD=1 $(MAKE) demo
+	cd demo && DEMO_LOAD=$(LOAD) DEMO_KEEP=$(KEEP) go test -tags demo -count=1 -timeout 30m -v -run '$(DEMO_RUN)' .

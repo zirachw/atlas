@@ -15,6 +15,15 @@ type region struct {
 	Zones    []string
 }
 
+// IDs embed the boot time because seq restarts at 1, so a restarted mock never reuses a stored ID.
+type Generator struct {
+	rng  *rand.Rand
+	boot int64
+	seq  int
+}
+
+const Seed = 4031 // IF4031
+
 var regions = []region{
 	{"Selatan Jawa", -9.52, 110.21, []string{"Pantai Selatan Yogyakarta", "Pantai Selatan Jawa Tengah"}},
 	{"Laut Banda", -6.48, 129.51, []string{"Kepulauan Banda", "Pesisir Maluku Tengah"}},
@@ -22,15 +31,6 @@ var regions = []region{
 	{"Selat Sunda", -6.93, 105.31, []string{"Pesisir Banten", "Pesisir Lampung Selatan"}},
 	{"Kepulauan Mentawai", -2.52, 99.53, []string{"Kepulauan Mentawai", "Pesisir Sumatera Barat"}},
 	{"Nusa Tenggara Barat", -8.87, 118.48, []string{"Pesisir Sumbawa", "Pesisir Lombok"}},
-}
-
-const Seed = 4031 // IF4031
-
-// IDs embed the boot time because seq restarts at 1, so a restarted mock never reuses a stored ID.
-type Generator struct {
-	rng  *rand.Rand
-	boot int64
-	seq  int
 }
 
 func NewGenerator(seed uint64, boot time.Time) *Generator {
@@ -55,17 +55,21 @@ func (g *Generator) Next(now time.Time) (SeismicEvent, []TsunamiWarning) {
 		RegionName:   r.Name,
 		OccurredAt:   occurred,
 	}
+
 	event.PotentialTsunami = event.Magnitude >= 6.0 && event.DepthKM <= 70 && g.rng.Float64() < 0.8
 	if !event.PotentialTsunami || g.rng.Float64() < 0.25 {
 		return event, nil
 	}
+
 	level := "Waspada"
+
 	switch {
 	case event.Magnitude >= 7.2:
 		level = "Awas"
 	case event.Magnitude >= 6.5:
 		level = "Siaga"
 	}
+
 	return event, []TsunamiWarning{{
 		WarningID:        fmt.Sprintf("bmkg-tw-%d-%06d", g.boot, g.seq),
 		RelatedEventID:   event.EventID,
@@ -78,6 +82,7 @@ func (g *Generator) Next(now time.Time) (SeismicEvent, []TsunamiWarning) {
 func RunGenerator(ctx context.Context, store Store, gen *Generator, interval time.Duration, log *slog.Logger) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -88,17 +93,39 @@ func RunGenerator(ctx context.Context, store Store, gen *Generator, interval tim
 			writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			start := time.Now()
 			err := store.Add(writeCtx, event, warnings...)
+
 			cancel()
+
 			reason := ""
 			if err != nil {
-				reason = err.Error()
+				reason = "store_error"
 			}
-			log.Info("database_call", "service", "bmkg", "dependency", "bmkg_store", "operation", "add_event", "correlation_id", id, "latency_ms", time.Since(start).Milliseconds(), "reason", reason)
+
+			log.Info("database_call",
+				"dependency", "bmkg_store",
+				"operation", "add_event",
+				"correlation_id", id,
+				"latency_ms", time.Since(start).Milliseconds(),
+				"reason", reason,
+			)
+
 			if err != nil {
-				log.Error("event_generation_failed", "service", "bmkg", "correlation_id", id, "event_id", event.EventID, "reason", err.Error())
+				log.Error("event_generation_failed",
+					"correlation_id", id,
+					"event_id", event.EventID,
+					"reason", err.Error(),
+				)
+
 				continue
 			}
-			log.Info("event_generated", "service", "bmkg", "correlation_id", id, "event_id", event.EventID, "magnitude", event.Magnitude, "potential_tsunami", event.PotentialTsunami, "warnings", len(warnings))
+
+			log.Info("event_generated",
+				"correlation_id", id,
+				"event_id", event.EventID,
+				"magnitude", event.Magnitude,
+				"potential_tsunami", event.PotentialTsunami,
+				"warnings", len(warnings),
+			)
 		}
 	}
 }

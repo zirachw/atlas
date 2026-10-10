@@ -13,85 +13,111 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-const exchangeName = "hazard.events"
-
 type Health struct{ ready atomic.Bool }
-
-func (h *Health) Ready() bool { return h.ready.Load() }
-func (h *Health) Handler() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, `{"error":{"code":"method_not_allowed"}}`, http.StatusMethodNotAllowed)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		if !h.Ready() {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte(`{"status":"unavailable"}` + "\n"))
-			return
-		}
-		_, _ = w.Write([]byte(`{"status":"ok"}` + "\n"))
-	})
-}
 
 type hazardMessage struct {
 	HazardID string `json:"hazard_id"`
 	Revision int64  `json:"revision"`
 }
 
-func consumeOnce(ctx context.Context, cfg Config, state *ProcessedState, health *Health, log *slog.Logger) error {
-	started := time.Now()
-	conn, err := amqp.DialConfig(cfg.AMQPURL, amqp.Config{Heartbeat: 10 * time.Second, Dial: func(network, address string) (net.Conn, error) {
-		return (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, network, address)
-	}})
+const exchangeName = "hazard.events"
+
+func (h *Health) Ready() bool { return h.ready.Load() }
+
+func (h *Health) Handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeJSON(
+				w,
+				http.StatusMethodNotAllowed,
+				map[string]any{"error": map[string]string{"code": "method_not_allowed"}},
+			)
+
+			return
+		}
+
+		if !h.Ready() {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unavailable"})
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
+}
+
+func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
+	state, err := OpenProcessedState(cfg.StatePath)
 	if err != nil {
-		log.Warn("broker_connect_failed", "service", cfg.Name, "dependency", "rabbitmq", "latency_ms", time.Since(started).Milliseconds())
+		return err
+	}
+
+	health := &Health{}
+	server := &http.Server{
+		Addr:              cfg.HealthAddr,
+		Handler:           health.Handler(),
+		ReadHeaderTimeout: 2 * time.Second,
+		ReadTimeout:       3 * time.Second,
+		WriteTimeout:      3 * time.Second,
+		IdleTimeout:       15 * time.Second,
+	}
+
+	listener, err := net.Listen("tcp", cfg.HealthAddr)
+	if err != nil {
+		return err
+	}
+
+	runCtx, stop := context.WithCancel(ctx)
+	defer stop()
+
+	serverDone := make(chan error, 1)
+
+	go func() {
+		serverDone <- server.Serve(listener)
+
+		stop()
+	}()
+
+	for runCtx.Err() == nil {
+		err := consumeOnce(runCtx, cfg, state, health, log)
+		if runCtx.Err() != nil {
+			break
+		}
+
+		if err != nil {
+			log.Warn("consumer_disconnected", "queue", cfg.Queue, "reason", err.Error())
+		}
+
+		timer := time.NewTimer(time.Second)
+		select {
+		case <-runCtx.Done():
+			timer.Stop()
+		case <-timer.C:
+		}
+	}
+
+	shutdown, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	_ = server.Shutdown(shutdown)
+
+	serveErr := <-serverDone
+	if errors.Is(serveErr, http.ErrServerClosed) {
+		return nil
+	}
+
+	return serveErr
+}
+
+func consumeOnce(ctx context.Context, cfg Config, state *ProcessedState, health *Health, log *slog.Logger) error {
+	conn, deliveries, err := subscribe(ctx, cfg, log)
+	if err != nil {
 		return err
 	}
 	defer conn.Close()
-	ch, err := conn.Channel()
-	if err != nil {
-		return err
-	}
-	defer ch.Close()
-	if err = ch.ExchangeDeclare(exchangeName, "fanout", true, false, false, false, nil); err != nil {
-		return err
-	}
-	// Preserve existing queue arguments and backlog across upgrades.
-	queue, err := ch.QueueInspect(cfg.Queue)
-	if err != nil {
-		var brokerErr *amqp.Error
-		if !errors.As(err, &brokerErr) || brokerErr.Code != 404 {
-			return err
-		}
-		// A missing queue closes the inspection channel; create on a new one.
-		ch, err = conn.Channel()
-		if err != nil {
-			return err
-		}
-		defer ch.Close()
-		queue, err = ch.QueueDeclare(cfg.Queue, true, false, false, false, cfg.queueArguments())
-		if err != nil {
-			return err
-		}
-	}
-	if err = ch.QueueBind(queue.Name, "", exchangeName, false, nil); err != nil {
-		return err
-	}
-	prefetch := cfg.Prefetch
-	if prefetch == 0 {
-		prefetch = 1
-	}
-	if err = ch.Qos(prefetch, 0, false); err != nil {
-		return err
-	}
-	deliveries, err := ch.Consume(queue.Name, cfg.Name, false, false, false, false, nil)
-	if err != nil {
-		return err
-	}
+
 	health.ready.Store(true)
-	log.Info("broker_connected", "service", cfg.Name, "queue", queue.Name, "exchange", exchangeName, "dependency", "rabbitmq", "latency_ms", time.Since(started).Milliseconds())
 	defer health.ready.Store(false)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -100,73 +126,147 @@ func consumeOnce(ctx context.Context, cfg Config, state *ProcessedState, health 
 			if !ok {
 				return errors.New("broker delivery stream closed")
 			}
-			var message hazardMessage
-			if err := json.Unmarshal(delivery.Body, &message); err != nil || !validHazardID(message.HazardID) || message.Revision < 0 {
-				log.Warn("message_rejected", "service", cfg.Name, "queue", cfg.Queue, "correlation_id", delivery.CorrelationId, "hazard_id", message.HazardID, "revision", message.Revision, "reason", "invalid_message")
-				ackStart := time.Now()
-				if err := delivery.Nack(false, false); err != nil {
-					return err
-				}
-				log.Info("broker_ack", "service", cfg.Name, "dependency", "rabbitmq", "queue", cfg.Queue, "correlation_id", delivery.CorrelationId, "acknowledged", false, "requeued", false, "latency_ms", time.Since(ackStart).Milliseconds())
-				continue
-			}
-			if message.Revision == 0 {
-				message.Revision = 1
-			}
-			processed, err := state.RecordRevision(message.HazardID, message.Revision)
-			if err != nil {
+
+			if err := handle(cfg, state, delivery, log); err != nil {
 				return err
 			}
-			if processed {
-				log.Info("event_processed", "service", cfg.Name, "queue", cfg.Queue, "hazard_id", message.HazardID, "revision", message.Revision, "correlation_id", delivery.CorrelationId)
-			} else {
-				log.Info("duplicate_delivery", "service", cfg.Name, "queue", cfg.Queue, "hazard_id", message.HazardID, "revision", message.Revision, "correlation_id", delivery.CorrelationId)
-			}
-			ackStart := time.Now()
-			if err := delivery.Ack(false); err != nil {
-				return err
-			}
-			log.Info("broker_ack", "service", cfg.Name, "dependency", "rabbitmq", "queue", cfg.Queue, "hazard_id", message.HazardID, "revision", message.Revision, "correlation_id", delivery.CorrelationId, "acknowledged", true, "latency_ms", time.Since(ackStart).Milliseconds())
 		}
 	}
 }
 
-func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
-	state, err := OpenProcessedState(cfg.StatePath)
+func subscribe(ctx context.Context, cfg Config, log *slog.Logger) (*amqp.Connection, <-chan amqp.Delivery, error) {
+	started := time.Now()
+	dial := func(network, address string) (net.Conn, error) {
+		return (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, network, address)
+	}
+
+	conn, err := amqp.DialConfig(cfg.AMQPURL, amqp.Config{Heartbeat: 10 * time.Second, Dial: dial})
+	if err != nil {
+		log.Warn("broker_connect_failed", "dependency", "rabbitmq", "latency_ms", time.Since(started).Milliseconds())
+		return nil, nil, err
+	}
+
+	deliveries, err := declareAndConsume(conn, cfg)
+	if err != nil {
+		_ = conn.Close()
+		return nil, nil, err
+	}
+
+	log.Info("broker_connected",
+		"queue", cfg.Queue,
+		"exchange", exchangeName,
+		"dependency", "rabbitmq",
+		"latency_ms", time.Since(started).Milliseconds(),
+	)
+
+	return conn, deliveries, nil
+}
+
+// An existing queue keeps its arguments and backlog, so only a missing queue gets the configured limits.
+func declareAndConsume(conn *amqp.Connection, cfg Config) (<-chan amqp.Delivery, error) {
+	ch, err := conn.Channel()
+	if err != nil {
+		return nil, err
+	}
+
+	if err = ch.ExchangeDeclare(exchangeName, "fanout", true, false, false, false, nil); err != nil {
+		return nil, err
+	}
+
+	if _, err = ch.QueueDeclarePassive(cfg.Queue, true, false, false, false, nil); err != nil {
+		var brokerErr *amqp.Error
+		if !errors.As(err, &brokerErr) || brokerErr.Code != amqp.NotFound {
+			return nil, err
+		}
+
+		// A missing queue closes the channel, so the queue is created on a new one.
+		if ch, err = conn.Channel(); err != nil {
+			return nil, err
+		}
+
+		if _, err = ch.QueueDeclare(cfg.Queue, true, false, false, false, cfg.queueArguments()); err != nil {
+			return nil, err
+		}
+	}
+
+	if err = ch.QueueBind(cfg.Queue, "", exchangeName, false, nil); err != nil {
+		return nil, err
+	}
+
+	if err = ch.Qos(cfg.Prefetch, 0, false); err != nil {
+		return nil, err
+	}
+
+	return ch.Consume(cfg.Queue, cfg.Name, false, false, false, false, nil)
+}
+
+// handle records the event before acknowledging it, so a crash between the two causes a duplicate, not a loss.
+func handle(cfg Config, state *ProcessedState, delivery amqp.Delivery, log *slog.Logger) error {
+	var message hazardMessage
+
+	err := json.Unmarshal(delivery.Body, &message)
+	if err != nil || !validHazardID(message.HazardID) || message.Revision < 1 {
+		log.Warn("message_rejected",
+			"queue", cfg.Queue,
+			"correlation_id", delivery.CorrelationId,
+			"hazard_id", message.HazardID,
+			"revision", message.Revision,
+			"reason", "invalid_message",
+		)
+
+		return acknowledge(cfg, delivery, message, false, log)
+	}
+
+	processed, err := state.RecordRevision(message.HazardID, message.Revision)
 	if err != nil {
 		return err
 	}
-	health := &Health{}
-	server := &http.Server{Addr: cfg.HealthAddr, Handler: health.Handler(), ReadHeaderTimeout: 2 * time.Second, ReadTimeout: 3 * time.Second, WriteTimeout: 3 * time.Second, IdleTimeout: 15 * time.Second}
-	listener, err := net.Listen("tcp", cfg.HealthAddr)
+
+	event := "event_processed"
+	if !processed {
+		event = "duplicate_delivery"
+	}
+
+	log.Info(event,
+		"queue", cfg.Queue,
+		"hazard_id", message.HazardID,
+		"revision", message.Revision,
+		"correlation_id", delivery.CorrelationId,
+	)
+
+	return acknowledge(cfg, delivery, message, true, log)
+}
+
+// acknowledge acks a handled delivery, or drops an invalid one without requeueing it.
+func acknowledge(cfg Config, delivery amqp.Delivery, message hazardMessage, ok bool, log *slog.Logger) error {
+	start := time.Now()
+
+	var err error
+	if ok {
+		err = delivery.Ack(false)
+	} else {
+		err = delivery.Nack(false, false)
+	}
+
 	if err != nil {
 		return err
 	}
-	runCtx, stop := context.WithCancel(ctx)
-	defer stop()
-	serverDone := make(chan error, 1)
-	go func() { serverDone <- server.Serve(listener); stop() }()
-	for runCtx.Err() == nil {
-		err := consumeOnce(runCtx, cfg, state, health, log)
-		if runCtx.Err() != nil {
-			break
-		}
-		if err != nil {
-			log.Warn("consumer_disconnected", "service", cfg.Name, "queue", cfg.Queue, "reason", err.Error())
-		}
-		timer := time.NewTimer(time.Second)
-		select {
-		case <-runCtx.Done():
-			timer.Stop()
-		case <-timer.C:
-		}
-	}
-	shutdown, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	_ = server.Shutdown(shutdown)
-	serveErr := <-serverDone
-	if errors.Is(serveErr, http.ErrServerClosed) {
-		return nil
-	}
-	return serveErr
+
+	log.Info("broker_ack",
+		"dependency", "rabbitmq",
+		"queue", cfg.Queue,
+		"hazard_id", message.HazardID,
+		"revision", message.Revision,
+		"correlation_id", delivery.CorrelationId,
+		"acknowledged", ok,
+		"latency_ms", time.Since(start).Milliseconds(),
+	)
+
+	return nil
+}
+
+func writeJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(value)
 }

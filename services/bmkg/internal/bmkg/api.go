@@ -14,8 +14,6 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-const correlationHeader = "X-Correlation-ID"
-
 type API struct {
 	Store  Store
 	APIKey string
@@ -23,24 +21,44 @@ type API struct {
 	Log    *slog.Logger
 }
 
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+const correlationHeader = "X-Correlation-ID"
+
 func (a *API) Handler() http.Handler {
 	r := chi.NewRouter()
 	r.Use(a.logRequest)
-	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), time.Second)
-		defer cancel()
-		if err := a.Store.Health(ctx); err != nil {
-			writeError(w, http.StatusServiceUnavailable, "store_unavailable")
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	r.NotFound(func(w http.ResponseWriter, _ *http.Request) { writeError(w, http.StatusNotFound, "not_found") })
+	r.MethodNotAllowed(func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed")
 	})
+	r.Get("/health", a.health)
 	r.Group(func(r chi.Router) {
 		r.Use(a.authenticate, a.delay)
 		r.Get("/seismic-events", read(a, "read_seismic_events", a.Store.Events))
 		r.Get("/tsunami-warnings", read(a, "read_tsunami_warnings", a.Store.Warnings))
 	})
+
 	return r
+}
+
+func (a *API) health(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), time.Second)
+	defer cancel()
+
+	start := time.Now()
+	err := a.Store.Health(ctx)
+	a.logDB(r, "health", start, err)
+
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "store_unavailable")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func read[T any](a *API, operation string, query func(context.Context, *time.Time) ([]T, error)) http.HandlerFunc {
@@ -49,13 +67,16 @@ func read[T any](a *API, operation string, query func(context.Context, *time.Tim
 		if !ok {
 			return
 		}
+
 		start := time.Now()
 		records, err := query(r.Context(), since)
 		a.logDB(r, operation, start, err)
+
 		if err != nil {
 			writeError(w, http.StatusServiceUnavailable, "store_unavailable")
 			return
 		}
+
 		writeJSON(w, http.StatusOK, records)
 	}
 }
@@ -65,7 +86,14 @@ func (a *API) logDB(r *http.Request, operation string, start time.Time, err erro
 	if err != nil {
 		reason = "store_error"
 	}
-	a.Log.Info("database_call", "service", "bmkg", "dependency", "bmkg_store", "operation", operation, "correlation_id", r.Header.Get(correlationHeader), "latency_ms", time.Since(start).Milliseconds(), "reason", reason)
+
+	a.Log.Info("database_call",
+		"dependency", "bmkg_store",
+		"operation", operation,
+		"correlation_id", r.Header.Get(correlationHeader),
+		"latency_ms", time.Since(start).Milliseconds(),
+		"reason", reason,
+	)
 }
 
 // No X-BMKG-Key (e.g. a PVMBG bearer token) gets 401. A wrong key gets 403.
@@ -95,6 +123,7 @@ func (a *API) delay(next http.Handler) http.Handler {
 func sleep(ctx context.Context, d time.Duration) bool {
 	timer := time.NewTimer(d)
 	defer timer.Stop()
+
 	select {
 	case <-ctx.Done():
 		return false
@@ -108,11 +137,13 @@ func parseSince(w http.ResponseWriter, r *http.Request) (*time.Time, bool) {
 	if len(values) == 0 {
 		return nil, true
 	}
+
 	t, err := time.Parse(time.RFC3339Nano, values[0])
 	if len(values) > 1 || err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_since")
 		return nil, false
 	}
+
 	return &t, true
 }
 
@@ -132,13 +163,23 @@ func (a *API) logRequest(next http.Handler) http.Handler {
 		if !validCorrelation(id) {
 			id = newCorrelationID()
 		}
+
 		r.Header.Set(correlationHeader, id)
 		w.Header().Set(correlationHeader, id)
+
 		start := time.Now()
+
 		logged := &statusWriter{ResponseWriter: w}
 		defer func() {
-			a.Log.Info("request", "service", "bmkg", "correlation_id", id, "method", r.Method, "path", r.URL.Path, "status", logged.status, "latency_ms", time.Since(start).Milliseconds())
+			a.Log.Info("request",
+				"correlation_id", id,
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", logged.status,
+				"latency_ms", time.Since(start).Milliseconds(),
+			)
 		}()
+
 		next.ServeHTTP(logged, r)
 	})
 }
@@ -147,6 +188,7 @@ func validCorrelation(id string) bool {
 	if id == "" || len(id) > 128 {
 		return false
 	}
+
 	return strings.IndexFunc(id, func(c rune) bool {
 		return !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("-_.", c))
 	}) < 0
@@ -154,20 +196,19 @@ func validCorrelation(id string) bool {
 
 func newCorrelationID() string {
 	var b [16]byte
+
 	_, _ = rand.Read(b[:])
+
 	return hex.EncodeToString(b[:])
 }
 
 // status stays 0 if nothing is written, e.g. the client left during the delay.
-type statusWriter struct {
-	http.ResponseWriter
-	status int
-}
 
 func (w *statusWriter) WriteHeader(status int) {
 	if w.status == 0 {
 		w.status = status
 	}
+
 	w.ResponseWriter.WriteHeader(status)
 }
 
@@ -175,5 +216,6 @@ func (w *statusWriter) Write(b []byte) (int, error) {
 	if w.status == 0 {
 		w.status = http.StatusOK
 	}
+
 	return w.ResponseWriter.Write(b)
 }

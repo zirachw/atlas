@@ -1,0 +1,16 @@
+# Publishes the stores on random loopback ports for make integration.
+services:
+  postgres:
+    networks: [canonical, auth-store, test-host]
+    ports: ['127.0.0.1::5432']
+  rabbitmq:
+    ports: ['127.0.0.1::5672']
+  bmkg-db:
+    networks: [bmkg-store, test-host]
+    ports: ['127.0.0.1::5432']
+  pvmbg-db:
+    networks: [pvmbg-store, test-host]
+    ports: ['127.0.0.1::5432']
+
+networks:
+  test-host:

@@ -1,0 +1,199 @@
+services:
+  postgres:
+    image: postgres:18.3-alpine
+    environment:
+      POSTGRES_USER: atlas_admin
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?run make env}
+      CANONICAL_DB_PASSWORD: ${CANONICAL_DB_PASSWORD:?run make env}
+      AUTH_DB_PASSWORD: ${AUTH_DB_PASSWORD:?run make env}
+    volumes:
+      - postgres-data:/var/lib/postgresql
+      - ./deploy/postgres/init.sh:/docker-entrypoint-initdb.d/01-owners.sh:ro
+    networks: [canonical, auth-store]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U atlas_admin -d postgres']
+      interval: 3s
+      timeout: 2s
+      retries: 15
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:4.2.5-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: atlas
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?run make env}
+    volumes: [rabbitmq-data:/var/lib/rabbitmq]
+    networks: [events]
+    healthcheck:
+      test: [CMD, rabbitmq-diagnostics, -q, ping]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  # Each agency owns its database on a network only that agency can reach.
+  bmkg-db:
+    image: postgres:18.3-alpine
+    environment:
+      POSTGRES_USER: bmkg
+      POSTGRES_DB: bmkg
+      POSTGRES_PASSWORD: ${BMKG_DB_PASSWORD:?run make env}
+    volumes: [bmkg-data:/var/lib/postgresql]
+    networks: [bmkg-store]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U bmkg -d bmkg']
+      interval: 3s
+      timeout: 2s
+      retries: 15
+    restart: unless-stopped
+
+  bmkg:
+    build: ./services/bmkg
+    environment:
+      DATABASE_URL: postgres://bmkg:${BMKG_DB_PASSWORD}@bmkg-db:5432/bmkg?sslmode=disable
+      BMKG_API_KEY: ${BMKG_API_KEY:?run make env}
+      EVENT_INTERVAL: ${SOURCE_EVENT_INTERVAL:-}
+    ports: ['127.0.0.1:${BMKG_PORT:-8081}:8081']
+    networks: [sources, bmkg-store]
+    depends_on:
+      bmkg-db: {condition: service_healthy}
+    restart: unless-stopped
+
+  pvmbg-db:
+    image: postgres:18.3-alpine
+    environment:
+      POSTGRES_USER: pvmbg
+      POSTGRES_DB: pvmbg
+      POSTGRES_PASSWORD: ${PVMBG_DB_PASSWORD:?run make env}
+    volumes: [pvmbg-data:/var/lib/postgresql]
+    networks: [pvmbg-store]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U pvmbg -d pvmbg']
+      interval: 3s
+      timeout: 2s
+      retries: 15
+    restart: unless-stopped
+
+  pvmbg:
+    build: ./services/pvmbg
+    environment:
+      DATABASE_URL: postgres://pvmbg:${PVMBG_DB_PASSWORD}@pvmbg-db:5432/pvmbg?sslmode=disable
+      PVMBG_TOKEN: ${PVMBG_TOKEN:?run make env}
+      MIN_RESPONSE_DELAY: ${PVMBG_MIN_RESPONSE_DELAY:-}
+      MAX_RESPONSE_DELAY: ${PVMBG_MAX_RESPONSE_DELAY:-}
+      EVENT_INTERVAL: ${SOURCE_EVENT_INTERVAL:-}
+    ports: ['127.0.0.1:${PVMBG_PORT:-8082}:8082']
+    networks: [sources, pvmbg-store]
+    depends_on:
+      pvmbg-db: {condition: service_healthy}
+    restart: unless-stopped
+
+  aggregator:
+    build: ./services/bnpb/aggregator
+    environment:
+      DATABASE_URL: postgres://aggregator:${CANONICAL_DB_PASSWORD}@postgres:5432/canonical?sslmode=disable
+      RABBITMQ_URL: amqp://atlas:${RABBITMQ_PASSWORD}@rabbitmq:5672/
+      BMKG_BASE_URL: http://bmkg:8081
+      PVMBG_BASE_URL: http://pvmbg:8082
+      BMKG_API_KEY: ${BMKG_API_KEY:?run make env}
+      PVMBG_TOKEN: ${PVMBG_TOKEN:?run make env}
+      AGGREGATOR_INTERNAL_TOKEN: ${AGGREGATOR_INTERNAL_TOKEN:?run make env}
+      POLL_INTERVAL: ${POLL_INTERVAL:-}
+    networks: [sources, internal-api, canonical, events]
+    depends_on:
+      postgres: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+    restart: unless-stopped
+
+  auth:
+    build: ./services/bnpb/auth
+    environment:
+      AUTH_DATABASE_URL: postgres://auth:${AUTH_DB_PASSWORD}@postgres:5432/auth?sslmode=disable
+      AUTH_VALIDATE_TOKEN: ${AUTH_VALIDATE_TOKEN:?run make env}
+      AUTH_ED25519_PRIVATE_KEY_B64: ${AUTH_ED25519_PRIVATE_KEY_B64:?run make env}
+      MEDIA_CLIENT_ID: ${MEDIA_CLIENT_ID:?run make env}
+      MEDIA_CLIENT_SECRET: ${MEDIA_CLIENT_SECRET:?run make env}
+      FIELD_TEAM_CLIENT_ID: ${FIELD_TEAM_CLIENT_ID:?run make env}
+      FIELD_TEAM_CLIENT_SECRET: ${FIELD_TEAM_CLIENT_SECRET:?run make env}
+      INTERNAL_OPS_CLIENT_ID: ${INTERNAL_OPS_CLIENT_ID:?run make env}
+      INTERNAL_OPS_CLIENT_SECRET: ${INTERNAL_OPS_CLIENT_SECRET:?run make env}
+      ACCESS_TOKEN_TTL: ${ACCESS_TOKEN_TTL:-}
+    ports: ['127.0.0.1:${AUTH_PORT:-8084}:8084']
+    networks: [auth-api, auth-store]
+    depends_on:
+      postgres: {condition: service_healthy}
+    restart: unless-stopped
+
+  client-api:
+    build: ./services/bnpb/client-api
+    environment:
+      AUTH_BASE_URL: http://auth:8084
+      AGGREGATOR_BASE_URL: http://aggregator:8083
+      AGGREGATOR_INTERNAL_TOKEN: ${AGGREGATOR_INTERNAL_TOKEN:?run make env}
+      AUTH_VALIDATE_TOKEN: ${AUTH_VALIDATE_TOKEN:?run make env}
+      AUTH_ED25519_PUBLIC_KEY_B64: ${AUTH_ED25519_PUBLIC_KEY_B64:?run make env}
+    ports: ['127.0.0.1:${CLIENT_API_PORT:-8080}:8080']
+    networks: [auth-api, internal-api]
+    depends_on:
+      auth: {condition: service_healthy}
+      aggregator: {condition: service_healthy}
+    restart: unless-stopped
+
+  consumer-a:
+    build: ./consumers/consumer-a
+    environment:
+      AMQP_URL: amqp://atlas:${RABBITMQ_PASSWORD}@rabbitmq:5672/
+    volumes: [consumer-a-data:/data]
+    networks: [events]
+    depends_on:
+      rabbitmq: {condition: service_healthy}
+    restart: unless-stopped
+
+  consumer-b:
+    build: ./consumers/consumer-b
+    environment:
+      AMQP_URL: amqp://atlas:${RABBITMQ_PASSWORD}@rabbitmq:5672/
+    volumes: [consumer-b-data:/data]
+    networks: [events]
+    depends_on:
+      rabbitmq: {condition: service_healthy}
+    restart: unless-stopped
+
+  consumer-c-demo:
+    profiles: [consumer-c-demo]
+    build: ./consumers/consumer-b
+    environment:
+      AMQP_URL: amqp://atlas:${RABBITMQ_PASSWORD}@rabbitmq:5672/
+      # The consumer-b image defaults to consumer-b, so only the name and queue change.
+      CONSUMER_NAME: consumer-c
+      CONSUMER_QUEUE: hazard.events.consumer-c
+    volumes: [consumer-c-data:/data]
+    networks: [events]
+    depends_on:
+      rabbitmq: {condition: service_healthy}
+    restart: unless-stopped
+
+networks:
+  sources:
+  internal-api:
+    internal: true
+  auth-api:
+  events:
+  canonical:
+    internal: true
+  auth-store:
+    internal: true
+  bmkg-store:
+    internal: true
+  pvmbg-store:
+    internal: true
+
+volumes:
+  postgres-data:
+  bmkg-data:
+  pvmbg-data:
+  rabbitmq-data:
+  consumer-a-data:
+  consumer-b-data:
+  consumer-c-data:

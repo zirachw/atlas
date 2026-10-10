@@ -1,0 +1,36 @@
+version: "2"
+
+run:
+  build-tags: [demo]
+
+linters:
+  enable:
+    - decorder
+    - wsl_v5
+  settings:
+    decorder:
+      # Types, then consts, then vars, then functions.
+      disable-dec-order-check: false
+    errcheck:
+      exclude-functions:
+        # A deferred Rollback after Commit only returns ErrTxClosed.
+        - (github.com/jackc/pgx/v5.Tx).Rollback
+    staticcheck:
+      checks: ["all", "-ST1000", "-ST1003", "-ST1016", "-ST1020", "-ST1021", "-ST1022", "-QF1001"]
+  exclusions:
+    presets:
+      - std-error-handling
+    rules:
+      - path: _test\.go
+        linters: [errcheck]
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  settings:
+    gofumpt:
+      # Without it, gofumpt treats atlas/... as standard library, since the path has no dot.
+      module-path: atlas
+    goimports:
+      local-prefixes: [atlas]

@@ -14,17 +14,32 @@ func TestJWTTrustAlgorithmAndRequiredClaims(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	now := time.Now()
-	base := AccessClaims{Issuer: "atlas-auth", Audience: "atlas-client-api", Subject: "media", ClientID: "media", Scope: "hazards:summary", SessionID: "00000000-0000-4000-8000-000000000001", TokenVersion: 1, IssuedAt: now.Unix(), ExpiresAt: now.Add(time.Minute).Unix(), TokenID: "jti"}
+	base := AccessClaims{
+		Issuer:       "atlas-auth",
+		Audience:     "atlas-client-api",
+		Subject:      "media",
+		ClientID:     "media",
+		Scope:        "hazards:summary",
+		SessionID:    "00000000-0000-4000-8000-000000000001",
+		TokenVersion: 1,
+		IssuedAt:     now.Unix(),
+		ExpiresAt:    now.Add(time.Minute).Unix(),
+		TokenID:      "jti",
+	}
+
 	encode := func(c AccessClaims, algorithm string) string {
 		header, _ := json.Marshal(map[string]string{"alg": algorithm, "typ": "JWT"})
 		payload, _ := json.Marshal(c)
 		unsigned := base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(payload)
+
 		return unsigned + "." + base64.RawURLEncoding.EncodeToString(ed25519.Sign(private, []byte(unsigned)))
 	}
 	if _, err := verifyAccessToken(encode(base, "EdDSA"), public, base.Issuer, base.Audience, now); err != nil {
 		t.Fatal(err)
 	}
+
 	for _, tc := range []struct {
 		name   string
 		change func(*AccessClaims)
@@ -46,16 +61,19 @@ func TestJWTTrustAlgorithmAndRequiredClaims(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			c := base
 			tc.change(&c)
+
 			if _, err := verifyAccessToken(encode(c, "EdDSA"), public, base.Issuer, base.Audience, now); err == nil {
 				t.Fatal("bad claims accepted")
 			}
 		})
 	}
+
 	for _, alg := range []string{"none", "HS256", "RS256"} {
 		if _, err := verifyAccessToken(encode(base, alg), public, base.Issuer, base.Audience, now); err == nil {
 			t.Fatalf("accepted algorithm %s", alg)
 		}
 	}
+
 	wrong, _, _ := ed25519.GenerateKey(rand.Reader)
 	if _, err := verifyAccessToken(encode(base, "EdDSA"), wrong, base.Issuer, base.Audience, now); err == nil {
 		t.Fatal("untrusted signing key accepted")

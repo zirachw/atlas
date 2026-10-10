@@ -8,8 +8,11 @@ type connectionSample struct {
 }
 
 func longestConnectionSpan(samples []connectionSample, minimum int, maximumGap time.Duration) time.Duration {
-	var start, previous time.Time
-	var longest time.Duration
+	var (
+		start, previous time.Time
+		longest         time.Duration
+	)
+
 	for _, sample := range samples {
 		gap := sample.At.Sub(previous)
 		if sample.Connections < minimum {
@@ -18,9 +21,12 @@ func longestConnectionSpan(samples []connectionSample, minimum int, maximumGap t
 			if start.IsZero() || gap <= 0 || gap > maximumGap {
 				start = sample.At
 			}
+
 			longest = max(longest, sample.At.Sub(start))
 		}
+
 		previous = sample.At
 	}
+
 	return longest
 }

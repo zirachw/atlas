@@ -49,11 +49,14 @@ func sources(q Query) []string {
 	if q.Source != "" {
 		return []string{q.Source}
 	}
+
 	if q.HazardType == "SEISMIC" {
 		return []string{"BMKG"}
 	}
+
 	if q.HazardType == "VOLCANIC" {
 		return []string{"PVMBG"}
 	}
+
 	return []string{"BMKG", "PVMBG"}
 }
