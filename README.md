@@ -4,88 +4,114 @@ Disaster coordination services for BMKG, PVMBG, and BNPB. M1 runs each component
 
 ## Run
 
-Install Docker with Compose, Go 1.27.1, GNU Make, and Bash. On Windows, use WSL. Copy and edit the local configuration:
+Install Docker with Compose, Go 1.27.2, GNU Make, Bash, and OpenSSL. On Windows, use WSL or Git Bash. Create `.env` with fresh secrets and a new Ed25519 signing pair.
 
 ```sh
-cp .env.example .env
+make env
 ```
 
-Generate an Ed25519 key pair and put both PEM files into `.env` as base64. The private key belongs only to Auth; the public key is used by Client API.
+`make env` overwrites `.env` every run. If the stack ran before, reset its databases with `docker compose down -v` so they accept the new passwords.
+
+Start all services in the foreground with `make dev`, or in the background with `make start`. Then check that they answer.
 
 ```sh
-openssl genpkey -algorithm Ed25519 -out .auth-private.pem
-openssl pkey -in .auth-private.pem -pubout -out .auth-public.pem
-auth_private_b64=$(base64 < .auth-private.pem | tr -d '\n')
-auth_public_b64=$(base64 < .auth-public.pem | tr -d '\n')
-sed -i "s|^AUTH_ED25519_PRIVATE_KEY_B64=.*|AUTH_ED25519_PRIVATE_KEY_B64=$auth_private_b64|" .env
-sed -i "s|^AUTH_ED25519_PUBLIC_KEY_B64=.*|AUTH_ED25519_PUBLIC_KEY_B64=$auth_public_b64|" .env
-```
-
-Start all services:
-
-```sh
-make dev                 # foreground
-# or
-make start               # background
+make start
 curl http://localhost:8080/health
 curl http://localhost:8084/health
 make logs
-make stop                # preserves database, broker, and consumer state volumes
+make stop      # keeps the database, broker, and consumer state volumes
 ```
 
-The source mocks listen on `8081` and `8082`; the Client API listens on `8080`; Auth listens on `8084`. All host bindings use loopback. The Aggregator API is reachable only from the Compose network.
+The source mocks listen on `8081` and `8082`, the Client API on `8080`, and Auth on `8084`. All host ports bind to `127.0.0.1`. The Aggregator API is reachable only from the Compose network. Never commit `.env`.
 
-Set source credentials and behavior, client credentials, database and broker passwords, the Auth validation credential, and ports in `.env`. The three downstream client IDs and secrets must be distinct. Access tokens default to 60 seconds; refresh tokens default to 7 days. Never commit `.env` or the generated private key.
+Most examples below read credentials from `.env`. Load it into the shell once.
+
+```sh
+set -a; source .env; set +a
+```
 
 ## Configuration
 
-Every variable lives in `.env`, copied from `.env.example`. Compose passes each service only the values it needs.
+`.env` holds two kinds of variables. Secrets are required, and `make env` generates them. Config is optional, and each value below is the default.
 
-| Variable | Used by | Meaning | Example default |
+| Variable | Used by | Meaning | Default |
 |---|---|---|---|
-| `POSTGRES_ADMIN_PASSWORD` | PostgreSQL | Superuser password, used only to create the two owner roles. | required |
-| `CANONICAL_DB_PASSWORD` | PostgreSQL, Aggregator | Password of the `aggregator` role that owns the Canonical Store. | required |
-| `AUTH_DB_PASSWORD` | PostgreSQL, Auth | Password of the `auth` role that owns the Auth Store. | required |
-| `BMKG_DB_PASSWORD`, `PVMBG_DB_PASSWORD` | Each agency database and its mock | Password of the agency's own database server. | required |
-| `RABBITMQ_USER`, `RABBITMQ_PASSWORD` | RabbitMQ, Aggregator, consumers | Broker credentials. | required |
-| `BMKG_API_KEY` | BMKG, Aggregator | BMKG key sent in `X-BMKG-Key`. | required |
-| `PVMBG_TOKEN` | PVMBG, Aggregator | PVMBG bearer token shaped `pvmbg.<key-id>.<secret>`, with a secret of at least 16 URL-safe characters. | required |
-| `AGGREGATOR_INTERNAL_TOKEN` | Aggregator, Client API | Credential for the Aggregator's internal read API. | required |
-| `MEDIA_CLIENT_ID`, `MEDIA_CLIENT_SECRET` | Auth | Media identity, summary fields only. | required |
-| `FIELD_TEAM_CLIENT_ID`, `FIELD_TEAM_CLIENT_SECRET` | Auth | Field Team identity, all fields. | required |
-| `INTERNAL_OPS_CLIENT_ID`, `INTERNAL_OPS_CLIENT_SECRET` | Auth | BNPB Internal Ops identity, all fields. | required |
-| `AUTH_ED25519_PRIVATE_KEY_B64` | Auth | Base64 PKCS#8 PEM key that signs access tokens. | required |
-| `AUTH_ED25519_PUBLIC_KEY_B64` | Client API | Base64 public key PEM that verifies access tokens. | required |
-| `AUTH_VALIDATE_TOKEN` | Auth, Client API | Credential for `POST /auth/validate`. | required |
-| `ACCESS_TOKEN_TTL`, `REFRESH_TOKEN_TTL` | Auth | Token lifetimes. | `60s`, `168h` |
+| `BMKG_API_KEY` | BMKG, Aggregator | BMKG key sent in `X-BMKG-Key`. | secret |
+| `PVMBG_TOKEN` | PVMBG, Aggregator | PVMBG bearer token shaped `pvmbg.<key-id>.<secret>`, with a secret of at least 16 URL-safe characters. | secret |
+| `AGGREGATOR_INTERNAL_TOKEN` | Aggregator, Client API | Credential for the Aggregator's internal read API. | secret |
+| `AUTH_VALIDATE_TOKEN` | Auth, Client API | Credential for `POST /auth/validate`. | secret |
+| `AUTH_ED25519_PRIVATE_KEY_B64` | Auth | Base64 PKCS#8 PEM key that signs access tokens. | secret |
+| `AUTH_ED25519_PUBLIC_KEY_B64` | Client API | Base64 public key PEM that verifies access tokens. | secret |
+| `MEDIA_CLIENT_ID`, `MEDIA_CLIENT_SECRET` | Auth | Media identity, summary fields only. | `media`, secret |
+| `FIELD_TEAM_CLIENT_ID`, `FIELD_TEAM_CLIENT_SECRET` | Auth | Field Team identity, all fields. | `field-team`, secret |
+| `INTERNAL_OPS_CLIENT_ID`, `INTERNAL_OPS_CLIENT_SECRET` | Auth | BNPB Internal Ops identity, all fields. The three IDs and secrets must be distinct. | `internal-ops`, secret |
+| `CANONICAL_DB_PASSWORD` | PostgreSQL, Aggregator | Password of the `aggregator` role that owns the Canonical Store. | secret |
+| `AUTH_DB_PASSWORD` | PostgreSQL, Auth | Password of the `auth` role that owns the Auth Store. | secret |
+| `BMKG_DB_PASSWORD`, `PVMBG_DB_PASSWORD` | Each agency database and its mock | Password of the agency's own database server. | secret |
+| `RABBITMQ_PASSWORD` | RabbitMQ, Aggregator, consumers | Password of the broker user `atlas`. | secret |
+| `POSTGRES_ADMIN_PASSWORD` | PostgreSQL | Superuser password, used only to create the two owner roles. | secret |
 | `BMKG_PORT`, `PVMBG_PORT`, `CLIENT_API_PORT`, `AUTH_PORT` | Compose | Loopback host ports. | `8081`, `8082`, `8080`, `8084` |
-| `BMKG_RESPONSE_DELAY` | BMKG | Fixed response delay, 50ms to 150ms. | `100ms` |
 | `PVMBG_MIN_RESPONSE_DELAY`, `PVMBG_MAX_RESPONSE_DELAY` | PVMBG | Random response delay range, within 500ms to 3s. | `500ms`, `3s` |
 | `SOURCE_EVENT_INTERVAL` | BMKG, PVMBG | Time between generated events, 1s to 10s. | `10s` |
 | `POLL_INTERVAL` | Aggregator | Time between polls of each source. | `3s` |
-| `SOURCE_TIMEOUT`, `SOURCE_RETRIES`, `RETRY_BACKOFF` | Aggregator | Source call deadline, retry count, and first retry wait. | `4s`, `2`, `200ms` |
-| `QUERY_TIMEOUT`, `QUERY_CAPACITY`, `QUERY_POOL_SIZE`, `INGEST_POOL_SIZE` | Aggregator | Read deadline, concurrent read limit, and database pool sizes. | `2s`, `64`, `8`, `2` |
-| `PUBLISH_TIMEOUT`, `PUBLISH_RETRIES`, `PUBLISH_CAPACITY` | Aggregator | Broker confirm deadline, retry count, and pending publication buffer. | `3s`, `2`, `256` |
-| `CLIENT_API_OUTBOUND_TIMEOUT` | Client API | Deadline for each call to Auth and the Aggregator. | `3s` |
-| `CLIENT_API_REQUEST_CAPACITY` | Client API | Maximum active hazard requests; excess requests receive 429 and `Retry-After`. | `128` |
-| `CONSUMER_A_NAME`, `CONSUMER_A_QUEUE`, and the B and C equivalents | Consumers | Consumer name and durable queue. | `consumer-a`, `hazard.events.consumer-a` |
-| `CONSUMER_PREFETCH` | Consumers | Maximum outstanding unacknowledged deliveries. | `1` |
-| `CONSUMER_QUEUE_MAX_LENGTH`, `CONSUMER_QUEUE_MAX_BYTES` | Consumers | Limits applied when creating a new queue. Existing queues retain their configuration. Overflow rejects new publications. | `10000`, `67108864` |
-| `CONSUMER_MESSAGE_TTL` | Consumers | Retention applied when creating a new queue; does not delete the queue when its consumer stops. | `1h` |
+| `ACCESS_TOKEN_TTL` | Auth | Access token lifetime. | `60s` |
+
+Other settings are fixed defaults in each service's `config.go`. The BMKG delay is 100ms, and refresh tokens last 7 days.
 
 ## Source mocks
 
 BMKG (`8081`) and PVMBG (`8082`) are passive. Each starts with 24 deterministic seed records and generates one new record every `SOURCE_EVENT_INTERVAL`. Each agency stores its records in its own PostgreSQL server (`bmkg-db`, `pvmbg-db`), on a network that only that agency joins. A restarted mock keeps its history and, for PVMBG, its schema version. The outage switch is not stored, so a restart always comes back without an outage. The `since` filter includes records at the requested timestamp.
 
-Load the example credentials into the shell first.
-
 ```sh
-set -a; source .env; set +a
 curl -H "X-BMKG-Key: $BMKG_API_KEY" 'http://localhost:8081/seismic-events?since=2026-09-29T12:00:00Z'
 curl -H "X-BMKG-Key: $BMKG_API_KEY" http://localhost:8081/tsunami-warnings
 curl -H "Authorization: Bearer $PVMBG_TOKEN" http://localhost:8082/volcanic-reports
 curl http://localhost:8082/health      # shows the current schema version
 ```
+
+## Client API and Auth
+
+Auth serves `POST /auth/login` with `{client_id, client_secret}` and `POST /auth/refresh` with `{refresh_token}`. Both return `{access_token, token_type, expires_in, refresh_token}`. `token_type` is `Bearer`, and `expires_in` is in seconds. Errors use `{"error":{"code":"..."}}`.
+
+Access JWTs are never stored. Auth stores the refresh-token hash and the session version in its own database. The Client API verifies the JWT locally, then calls `POST /auth/validate` with `{session_id, token_version}` using a dedicated internal bearer credential. A valid current session returns `{active:true}`. There is no positive validation cache, so a refresh immediately supersedes earlier access tokens. An unavailable Auth gives 503.
+
+`GET /hazards` accepts the Aggregator filters `source`, `hazard_type`, `severity`, `since`, and `limit`, and returns the freshness of each source in `sources`. That freshness block contains only `source`, `status`, `last_success_at`, and `stale_since`. Unknown envelope fields and dependency diagnostics are not forwarded. A malformed Aggregator response gives 502. Local overload and an Aggregator 429 both give a public 429 with `Retry-After`.
+
+| View | Fields | Allowed clients |
+|---|---|---|
+| `summary` (default) | `hazard_id`, `source`, `hazard_type`, `severity`, `area_name`, `occurred_at`, `ingested_at` | All three identities |
+| `raw` | All canonical fields, including coordinates, `source_ref_id`, and `attributes` | Field Team and Internal Ops |
+
+## Aggregator internal API
+
+`GET /internal/hazards` supports `source`, `hazard_type`, `severity`, inclusive `since=<RFC3339>`, and `limit` (1 to 500, default 100). Responses contain `data` and the freshness of each source in `sources`. A response is 200 even when one source is unavailable, and that source shows `"status":"unavailable"`. It is 503 only when every requested source is unavailable.
+
+The Aggregator publishes no host port, so query it from inside its container.
+
+```sh
+docker compose exec aggregator wget -qO- http://127.0.0.1:8083/health
+docker compose exec aggregator sh -c   'wget -qO- --header "Authorization: Bearer $AGGREGATOR_INTERNAL_TOKEN" "http://127.0.0.1:8083/internal/hazards?source=BMKG&limit=20"'
+```
+
+## Hazard revisions and late tsunami warnings
+
+A new hazard starts at `revision=1`. If severity, area, coordinates, occurrence time, or attributes change, the Aggregator updates the same stored hazard, increments its revision, and publishes its committed snapshot. `hazard_id` and the original `ingested_at` stay the same. Identical polling results do not increment the revision or publish a message. JSON key order and whitespace do not count as changes. Joined warnings are ordered by warning ID.
+
+For example, a seismic event is published as revision 1. A related tsunami warning that arrives three minutes later updates severity and `attributes.tsunami_warnings`, and publishes revision 2. The warning joins only events with `potential_tsunami=true`, within the one-hour warning lookback. Broker messages contain `revision` and use `message_id=<hazard_id>:<revision>`, and retries keep that identity. Revision is visible in the Aggregator API and the raw Client API view. The summary view keeps its specified fields.
+
+Publication uses a bounded in-memory publisher, not a transactional outbox. A crash between save and publish, or exhausted retries, can lose a publication, so a stored revision does not by itself guarantee delivery. The M1 spec does not define late-warning publication, so this policy is a team decision.
+
+## Event consumers
+
+Both consumers have separate durable queues and separate persistent idempotency files. The stored effect is one ledger entry per `(hazard_id, revision)`, so the effect and the duplicate marker are the same durable record. The consumer appends and syncs that record before ACK, and a duplicate adds no record. On restart it reloads complete records and repairs an interrupted final append. Each ledger has one writer. It grows with processed IDs and is not designed for multiple replicas.
+
+The supported M1 outage is 30 seconds, at up to two events per second and payloads up to 32 KiB, with catch-up within 60 seconds after restart. New queues keep messages for one hour, bounded by 10,000 ready messages and 64 MiB of payload. Beyond those bounds, TTL expires old messages, or `reject-publish` returns a publisher NACK. Retries can deliver duplicate copies to other queues. See RabbitMQ's [queue limits](https://www.rabbitmq.com/docs/maxlength) and [message TTL](https://www.rabbitmq.com/docs/ttl). This is at-least-once processing of retained deliveries, with no guarantee for unlimited outages or historical replay.
+
+Consumers reuse an existing queue without redeclaring its arguments, and create only a missing queue with the configured limits. The limits are code defaults that the service environment can override, and a changed value does not alter an existing queue. Compose gives each consumer, including the optional third one, its own state volume.
+
+## Test scenarios
+
+Each problem lists the manual steps for a live demo, then the automated check. `make demo P=Px` runs only that problem's checks on a fresh stack.
 
 ### P1. Live schema change
 
@@ -94,9 +120,10 @@ Start the stack and let the Aggregator ingest the original schema. Then switch P
 ```sh
 curl -X POST http://localhost:8082/admin/schema-version -d '{"version":2}'
 curl -X POST http://localhost:8082/admin/schema-version -d '{"version":1}'   # stop adding the field
+make demo P=P1
 ```
 
-### P2. Slow source and outage
+### P2. Slow source, outage, and load
 
 For the three-second delay, set `PVMBG_MIN_RESPONSE_DELAY=3s` and `PVMBG_MAX_RESPONSE_DELAY=3s` in `.env`, then recreate only PVMBG. Other containers keep running.
 
@@ -104,7 +131,7 @@ For the three-second delay, set `PVMBG_MIN_RESPONSE_DELAY=3s` and `PVMBG_MAX_RES
 docker compose up -d pvmbg
 ```
 
-Switch the PVMBG outage on and off at any time. Mode `error` returns 503 at once. Mode `hang` sends no response, like a dead host. Reports keep accumulating during the outage, and the Aggregator catches up after recovery.
+Switch the PVMBG outage on and off at any time. Mode `error` returns 503 at once. Mode `hang` sends no response, like a dead host. Reports keep accumulating during the outage, and the Aggregator catches up after recovery. During the outage, `GET /hazards?source=PVMBG` returns the last stored data and marks PVMBG with `stale_since`.
 
 ```sh
 curl -X POST http://localhost:8082/admin/outage -d '{"enabled":true,"mode":"error"}'
@@ -112,28 +139,16 @@ curl -X POST http://localhost:8082/admin/outage -d '{"enabled":true,"mode":"hang
 curl -X POST http://localhost:8082/admin/outage -d '{"enabled":false}'
 ```
 
-### P3. Separate agency credentials
-
-Each mock rejects the other agency's credential.
+`make demo P=P2 LOAD=1` runs the load test on a fresh stack and samples Client API connections. To run k6 by hand against your own stack, install [k6](https://grafana.com/docs/k6/latest/set-up/install-k6/) and set the three-second PVMBG delay first.
 
 ```sh
-curl -i -H "X-BMKG-Key: $PVMBG_TOKEN" http://localhost:8081/seismic-events                 # 403
-curl -i -H "Authorization: Bearer $BMKG_API_KEY" http://localhost:8082/volcanic-reports    # 401
-```
-
-### P2. Load test
-
-`make demo-load` runs this load test on a fresh Compose stack and samples Client API connections, as described under Checks. To run k6 by hand against a stack you started yourself, install [k6](https://grafana.com/docs/k6/latest/set-up/install-k6/) and set the three-second PVMBG delay first.
-
-```sh
-set -a; source .env; set +a
 CLIENT_ID=$INTERNAL_OPS_CLIENT_ID CLIENT_SECRET=$INTERNAL_OPS_CLIENT_SECRET k6 run loadtest/p2.js
 CLIENT_ID=$INTERNAL_OPS_CLIENT_ID CLIENT_SECRET=$INTERNAL_OPS_CLIENT_SECRET k6 run -e SCENARIO=burst loadtest/p2.js
 ```
 
 The sustained scenario runs 40 BMKG-only and 20 volcanic virtual users for 90 seconds. Each user keeps its own connection and refreshes its token before the 60-second TTL ends. The burst scenario runs 400 users for 20 seconds, which exceeds Client API capacity and must produce counted 429 responses without unexpected errors.
 
-The demo records timestamped connection samples and requires an observed interval of at least 60 seconds with 50 or more connections at every sample. A count below 50 or a sampling gap longer than five seconds resets the interval. Samples are saved in `evidence/p2-sustained-connections.json`; the demo report records the longest qualifying interval.
+The demo records timestamped connection samples and requires an interval of at least 60 seconds with 50 or more connections at every sample. A count below 50 or a sampling gap longer than five seconds resets the interval. The samples and k6 summaries are saved under `P2/` in the run's evidence folder, and the report records the longest qualifying interval.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -145,105 +160,66 @@ The demo records timestamped connection samples and requires an observed interva
 | `BASE_URL`, `AUTH_URL` | `http://localhost:8080`, `http://localhost:8084` | Client API and Auth addresses. |
 | `SUMMARY_JSON`, `SUMMARY_TEXT` | unset | Files for the full k6 summary and the printed table. |
 
-## Client API and Auth
+### P3. Credentials and access tokens
 
-The Auth contract is `POST /auth/login` with `{client_id, client_secret}` and `POST /auth/refresh` with `{refresh_token}`. Both return `{access_token, token_type, expires_in, refresh_token}`; `token_type` is `Bearer` and `expires_in` is in seconds. Errors use `{"error":{"code":"..."}}`.
+Each mock rejects the other agency's credential.
 
-Access JWTs are never stored. Auth stores the refresh-token hash and session/version metadata in its own database. Client API verifies the JWT locally, then calls `POST /auth/validate` with `{session_id, token_version}` using a dedicated internal bearer credential. A valid current session returns `{active:true}`. There is no positive validation cache, so refresh immediately supersedes earlier access versions. An unavailable Auth dependency gives 503.
+```sh
+curl -i -H "X-BMKG-Key: $PVMBG_TOKEN" http://localhost:8081/seismic-events                 # 403
+curl -i -H "Authorization: Bearer $BMKG_API_KEY" http://localhost:8082/volcanic-reports    # 401
+```
 
-Summary responses use the seven-field allowlist below; freshness metadata contains only `source`, `status`, `last_success_at`, and `stale_since`. Unknown envelope/metadata fields and dependency diagnostics are not forwarded. Malformed upstream envelopes give a controlled 502. Both local overload and an Aggregator 429 produce a public 429 with `Retry-After`.
-
-| View | Fields | Allowed clients |
-|---|---|---|
-| `summary` (default) | `hazard_id`, `source`, `hazard_type`, `severity`, `area_name`, `occurred_at`, `ingested_at` | All three identities |
-| `raw` | All canonical fields, including coordinates, `source_ref_id`, and `attributes` | Field Team and Internal Ops |
-
-Obtain Media credentials from `.env` and log in:
+Log in as Media and request summary data with the returned access token.
 
 ```sh
 curl -s http://localhost:8084/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"client_id":"media-demo","client_secret":"example-media-secret"}'
+  -d "{\"client_id\":\"$MEDIA_CLIENT_ID\",\"client_secret\":\"$MEDIA_CLIENT_SECRET\"}"
+curl -H 'Authorization: Bearer <access-token>' 'http://localhost:8080/hazards?source=BMKG&limit=20'
 ```
 
-Use the returned access token to request summary data:
+Media receives summary fields only, and an explicit raw request gives 403. Field Team and Internal Ops can request `view=raw`.
 
 ```sh
-curl -H 'Authorization: Bearer <access-token>' \
-  'http://localhost:8080/hazards?source=BMKG&limit=20'
+curl -i -H 'Authorization: Bearer <media-access-token>' 'http://localhost:8080/hazards?view=raw'
 ```
 
-Media receives summary fields only. An explicit raw request is rejected with `403`:
-
-```sh
-curl -i -H 'Authorization: Bearer <media-access-token>' \
-  'http://localhost:8080/hazards?view=raw'
-```
-
-Field Team and Internal Ops credentials can request `view=raw`. When an access token expires, refresh it without logging in again:
+When an access token expires, refresh it without logging in again. Refresh rotates the refresh token and increments the session version, so the previous refresh token and access token both fail afterwards.
 
 ```sh
 curl -s http://localhost:8084/auth/refresh \
   -H 'Content-Type: application/json' \
   -d '{"refresh_token":"<refresh-token>"}'
+make demo P=P3
 ```
 
-Refresh rotates the refresh token and increments the session token version. Reusing the previous refresh token or access token fails. `GET /hazards` also accepts the Aggregator filters `source`, `hazard_type`, `severity`, `since`, and `limit`; it returns per-source freshness metadata in `sources`.
+### P4. Independent services and flexible storage
 
-## Hazard revisions and late tsunami warnings
-
-A new hazard starts at `revision=1`. If severity, area, coordinates, occurrence time, or attributes change, the Aggregator updates the same stored hazard, increments its revision, and publishes its committed snapshot. `hazard_id` and the original `ingested_at` remain stable. Identical polling results do not increment the revision or publish a message; JSON object key order and whitespace do not count as changes. Joined warnings are ordered by warning ID.
-
-For example, a seismic event is published as revision 1. A related tsunami warning arriving three minutes later updates severity and `attributes.tsunami_warnings`, and publishes revision 2. The warning joins only events with `potential_tsunami=true`. The existing one-hour warning lookback still applies. Broker messages contain `revision` and use `message_id=<hazard_id>:<revision>`; retries retain that identity. Revision is visible in the Aggregator API and the authorized raw Client API view; the summary projection keeps its specified fields.
-
-Existing canonical rows automatically receive revision 1 on Aggregator startup. Consumers treat messages without a revision and legacy bare-ID ledger entries as revision 1. Newer revisions use ledger entries `<hazard_id>:<revision>`, so duplicate deliveries add no effects while a later revision is processed. Deploy the updated consumers before the Aggregator so existing ID-only consumers do not discard updates. Consumers should use the revision when applying snapshots to avoid replacing newer data with older deliveries.
-
-Revision publication uses the existing bounded in-memory publisher, not a transactional outbox. The save/publish crash gap and exhausted retry loss remain; persisted revision does not by itself guarantee delivery. This update/publication policy is a group design decision because the M1 specification does not explicitly define late-warning publication.
-
-## Event consumer demonstration
-
-Both consumers have separate durable queues and separate persistent idempotency files. The demonstration's stored effect is one ledger entry per `(hazard_id, revision)`: the effect and duplicate marker are the same durable record. The consumer appends and syncs that record before ACK; a duplicate adds no record. On restart it reloads complete records and repairs an interrupted final append. Each ledger has one writer; it grows with processed IDs and is not designed for multiple replicas.
-
-The supported M1 demo outage is 30 seconds, at up to two events per second and payloads no larger than 32 KiB, with catch-up within 60 seconds after restart. Newly created queues keep messages for one hour, bounded by 10,000 ready messages and 64 MiB of payload bytes. Beyond those bounds, TTL expires old messages or `reject-publish` returns a publisher NACK. Retries can deliver duplicate copies to other queues. See RabbitMQ's [queue limits](https://www.rabbitmq.com/docs/maxlength) and [message TTL](https://www.rabbitmq.com/docs/ttl). This is at-least-once processing of retained deliveries, with no unlimited outage or historical replay guarantee.
-
-Consumers inspect and reuse existing queues without redeclaring their arguments. This supports upgrades from the original queues without TTL/limits and preserves their backlog and names. Only a missing queue is created with the configured arguments. Changing `.env` limits does not alter an existing queue. Queue/state paths are service environment settings. Compose assigns separate state volumes, including the optional third subscriber.
-
-### Upgrade existing queues without losing backlog
-
-Keep the broker and consumer volumes, and keep the existing queue names and state paths. Queues from the original release have no TTL/limits; upgrading the consumers alone resumes their retained deliveries but leaves those queues unbounded. To apply the default bounds to those queues, drain them first and then use a RabbitMQ policy. Applying TTL immediately can expire old backlog; applying limits before draining can also discard messages or reject publications.
-
-Run these commands in Bash/WSL from the repo root. If Consumer C is active, include `consumer-c-demo` in the consumer rebuild, stop, start, and log commands below, and verify its queue is also drained.
+Rebuild and restart only the Aggregator. The other containers keep running, and requests that do not need the Aggregator, such as an Auth login or a BMKG read, keep answering during the rebuild.
 
 ```sh
-# Pause publications and replace only the consumer containers.
-docker compose stop aggregator consumer-a consumer-b
-docker compose up -d --build --no-deps consumer-a consumer-b
-
-# Repeat until both consumer queues show messages_ready=0 and
-# messages_unacknowledged=0. Check logs for event_processed/duplicate_delivery.
-docker compose exec -T rabbitmq rabbitmqctl list_queues name messages_ready messages_unacknowledged consumers
-docker compose logs --since=5m consumer-a consumer-b
-
-# Once drained, stop consumers and check again: no messages should remain.
-docker compose stop consumer-a consumer-b
-docker compose exec -T rabbitmq rabbitmqctl list_queues name messages_ready messages_unacknowledged consumers
-
-# Apply bounds to the existing queues without deleting or renaming them.
-docker compose exec -T rabbitmq rabbitmqctl set_policy --apply-to queues --priority 10 \
-  atlas-consumer-limits '^hazard\.events\.consumer-[abc]$' \
-  '{"message-ttl":3600000,"max-length":10000,"max-length-bytes":67108864,"overflow":"reject-publish"}'
-docker compose exec -T rabbitmq rabbitmqctl list_policies
-
-# Resume consumers, then polling/publication.
-docker compose start consumer-a consumer-b
-docker compose start aggregator
+docker compose up -d --build --no-deps aggregator
+docker compose ps
+curl -H "X-BMKG-Key: $BMKG_API_KEY" http://localhost:8081/seismic-events
 ```
 
-Use the actual queue names in the policy pattern if `.env` overrides them, and set policy values to match the desired bounds (`message-ttl` is milliseconds). After the policy is installed, the retained-message limits apply to future traffic. If the backlog does not drain or processing reports storage errors, keep Aggregator stopped and resolve the failure before applying the policy. Do not delete queues or use `docker compose down -v` during this upgrade.
+The Canonical Store keeps unmapped fields in the JSONB `attributes` column, so records from before and after the P1 switch sit side by side with no migration. Count both shapes.
 
-Queues already created with explicit arguments retain those values; client arguments take precedence over a normal RabbitMQ policy. The passive reuse also supports restarting those queues after `.env` values change, but changing their effective limits needs a separate planned migration. See RabbitMQ's [policy precedence](https://www.rabbitmq.com/docs/4.2/queues#optional-arguments-and-policy-defined-key-precedence).
+```sh
+docker compose exec -T postgres psql -U atlas_admin -d canonical -c \
+  "SELECT attributes ? 'confidence_level' AS has_confidence, count(*) FROM hazard_events WHERE source='PVMBG' GROUP BY 1"
+```
 
-Stop Consumer A while source events continue, and confirm Consumer B continues processing:
+Only the Aggregator and PostgreSQL join the `canonical` network, so no other service can reach the Canonical Store.
+
+```sh
+docker network inspect atlas_canonical -f '{{range .Containers}}{{.Name}} {{end}}'
+make demo P=P4
+```
+
+### P5. Fanout to independent consumers
+
+Stop Consumer A while source events continue, and confirm Consumer B keeps processing and the Aggregator keeps publishing.
 
 ```sh
 docker compose stop consumer-a
@@ -252,12 +228,13 @@ docker compose start consumer-a
 docker compose logs -f consumer-a
 ```
 
-To add a third subscriber without changing Aggregator code, start the optional Consumer C demo profile. It uses the Consumer B implementation with its own queue and persistent state volume. New queues receive events published after they are bound.
+To add a third subscriber without changing Aggregator code, start the optional Consumer C profile. It uses the Consumer B image with its own queue and state volume. A new queue receives events published after it is bound.
 
 ```sh
 docker compose --profile consumer-c-demo up -d consumer-c-demo
 docker compose logs -f consumer-c-demo
 docker compose --profile consumer-c-demo stop consumer-c-demo
+make demo P=P5
 ```
 
 ## Checks
@@ -269,32 +246,32 @@ Each test layer has one job, so no behavior is asserted twice.
 | Unit | `make ci` | Logic inside one service, such as mapping rules, scopes, and credentials. CI runs this layer. |
 | Integration | `make integration` | One service against real PostgreSQL or RabbitMQ, such as checkpoints, grants, queue limits, and the save/publish crash gap. |
 | Demo | `make demo` | Every specification criterion, black-box, on a fresh Compose stack. |
-| Load | `make demo-load` | Demo plus the P2 sustained and overload k6 runs. |
+| Load | `make demo LOAD=1` | Demo plus the P2 sustained and overload k6 runs. |
 
-Demo checks are named by the criterion they prove, for example `P2.3 outage serves stale volcanic data and fresh seismic data`. `S1` is the source contract and `R1` to `R7` are the implementation rules. A full run writes `evidence/demo.md`, a matrix of every check and every criterion, and `evidence/demo.json` with the evidence each check recorded.
+Demo checks are named by the criterion they prove, for example `P2.3 outage serves stale volcanic data and fresh seismic data`. `S1` is the source contract, and `R1` to `R7` are the implementation rules. Every run, full or filtered, writes `demo.md` and `demo.json` to its own `evidence/YYYY-MM-DD_HH-MM-SS_WIB/` folder. `demo.md` is a matrix of every check and criterion, and `demo.json` holds the evidence each check recorded. Stack state, including the generated secrets, stays in the gitignored `.demo/` folder.
 
-For a live demonstration, run one problem at a time. Keep the stack between runs to skip the startup.
+For a live demonstration, run one problem at a time. `KEEP=1` keeps the stack between runs to skip the startup.
 
 ```sh
-DEMO_KEEP=1 make demo P=P1
-DEMO_KEEP=1 make demo P=P3
-DEMO_KEEP=1 DEMO_LOAD=1 make demo P=P2
+make demo P=P1 KEEP=1
+make demo P=P3 KEEP=1
+make demo P=P2 KEEP=1 LOAD=1
 make demo P=P5
 ```
 
-A filtered run writes its matrix under `evidence/local/` so it never replaces the full evidence. The suite needs Docker and Go, and it runs on Linux, macOS, and Windows. P3.3 waits for a real 60-second token expiry, so a full run takes about 10 minutes.
+The suite needs Docker and Go, and it runs on Linux, macOS, and Windows. P3.3 waits for a real 60-second token expiry, so a full run takes about 10 minutes.
 
 ## Compose networks
 
 | Network | Members | Purpose |
 |---|---|---|
-| `auth-api` | Auth, Client API | Auth validation and loopback-published client access on 8084/8080. Regular bridge so published ports work. |
-| `internal-api` | Client API, Aggregator | Internal canonical reads; internal network, no Aggregator host port. |
+| `auth-api` | Auth, Client API | Auth validation and the published client ports 8084 and 8080. A regular bridge, so published ports work. |
+| `internal-api` | Client API, Aggregator | Internal canonical reads. Internal network, with no Aggregator host port. |
 | `auth-store` | Auth, PostgreSQL | Internal Auth database access. |
 | `canonical` | Aggregator, PostgreSQL | Internal canonical database access. |
+| `bmkg-store` | BMKG, `bmkg-db` | Internal BMKG database access. |
+| `pvmbg-store` | PVMBG, `pvmbg-db` | Internal PVMBG database access. |
 | `sources` | BMKG, PVMBG, Aggregator | Source polling. |
 | `events` | RabbitMQ, Aggregator, consumers | Fanout publication and subscriptions. |
 
-Client API belongs to neither database network and receives no database credentials. PostgreSQL is shared infrastructure with separate `auth`/`aggregator` roles and database grants denying cross-owner connections. Network separation controls reachability; database grants control ownership on the shared server. Auth/Client API host ports are bound to `127.0.0.1`.
-
-See the [Aggregator README](services/bnpb/aggregator/README.md) for the internal API contract and examples.
+The Client API belongs to no database network and receives no database credentials. BNPB's PostgreSQL server is shared infrastructure with separate `auth` and `aggregator` roles, and database grants deny cross-owner connections. Network separation controls reachability, and database grants control ownership on the shared server.
